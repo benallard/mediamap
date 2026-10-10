@@ -34,7 +34,7 @@ For books added later, use `python library.py add`; the saved UMAP model project
 - UMAP coordinates are relative, arbitrary axes, not literal shelf numbers. Nearby coordinates are a starting point for grouping books into shelf sections.
 - Cross-language equivalence and UMAP quality are not guaranteed. Sparse or missing summaries lead to weaker placement. Inspect the printed nearest neighbours and test on books you know well.
 - The metadata providers may return multiple editions. Choose the correct record from the list. This prototype detects repeat entries by the same provider record ID; it does **not** yet robustly merge different provider records or editions of the same work. Content similarity helps placement, but is not proof of duplicate identity.
-- Google Books is tried first; Open Library is a fallback when Google returns no results. Open Library descriptions are not available for every record. The prototype currently does not combine results from both providers for every book.
+- Google Books is tried first; if it is rate-limited (HTTP 429), fails, or returns no matches, the program tries Open Library. If Open Library’s structured title/author search returns no matches, it tries one broader combined query. Open Library descriptions are not available for every record. The prototype currently does not combine results from both providers for every book. Open Library requests identify the app with a User-Agent; you can optionally set `BOOKMAP_CONTACT_EMAIL` to include a contact address as requested by Open Library.
 - This is a local prototype, not a polished mobile app. It has not been tested against a real collection yet.
 
 ## Suggested next improvements

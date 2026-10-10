@@ -18,6 +18,7 @@ import re
 import sqlite3
 import sys
 import time
+import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -28,7 +29,10 @@ HERE = Path(__file__).resolve().parent
 DB_PATH = HERE / "library.sqlite3"
 MODEL_PATH = HERE / "map_model.joblib"
 EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-USER_AGENT = "BookMapPersonalLibrary/0.1 (local hobby project)"
+# Open Library asks API clients to identify themselves. Set BOOKMAP_CONTACT_EMAIL
+# in your environment to include a contact address in the User-Agent.
+CONTACT_EMAIL = os.environ.get("BOOKMAP_CONTACT_EMAIL", "").strip()
+USER_AGENT = "BookMapPersonalLibrary/0.2" + (f" (contact: {CONTACT_EMAIL})" if CONTACT_EMAIL else " (personal, low-volume use)")
 
 
 def connect() -> sqlite3.Connection:
@@ -56,12 +60,21 @@ def connect() -> sqlite3.Connection:
 
 
 def get_json(url: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Fetch JSON. Return None on failure so another metadata provider can be tried."""
     try:
-        r = requests.get(url, params=params, timeout=15, headers={"User-Agent": USER_AGENT})
+        r = requests.get(url, params=params, timeout=15, headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json",
+        })
+        if r.status_code == 429:
+            retry_after = r.headers.get("Retry-After")
+            suffix = f" Retry-After: {retry_after}." if retry_after else ""
+            print(f"Metadata provider rate-limited this request (HTTP 429): {url}.{suffix}", file=sys.stderr)
+            return None  # Do not hammer the provider; caller can try the next source.
         r.raise_for_status()
         return r.json()
     except (requests.RequestException, ValueError) as e:
-        print(f"Metadata lookup failed: {e}", file=sys.stderr)
+        print(f"Metadata lookup failed for {url}: {e}", file=sys.stderr)
         return None
 
 
@@ -81,17 +94,32 @@ def google_search(title: str, author: str) -> list[dict[str, Any]]:
 
 
 def openlibrary_search(title: str, author: str) -> list[dict[str, Any]]:
-    params = {"title": title, "limit": 10}
+    """Search Open Library, trying structured fields before a combined text query."""
+    base = "https://openlibrary.org/search.json"
+    fields = "key,title,author_name,first_publish_year,isbn,subject,language,description"
+    params: dict[str, Any] = {"title": title, "limit": 10, "fields": fields}
     if author:
         params["author"] = author
-    data = get_json("https://openlibrary.org/search.json", params)
+    data = get_json(base, params)
+    docs = (data or {}).get("docs", [])
+
+    # Some title/author combinations are too restrictive in the structured search.
+    # Try one broader query only if the first search succeeded but returned no matches.
+    if data is not None and not docs:
+        query = f'"{title}" {author}'.strip()
+        data = get_json(base, {"q": query, "limit": 10, "fields": fields})
+        docs = (data or {}).get("docs", [])
+
     out = []
-    for item in (data or {}).get("docs", []):
+    for item in docs:
         key = item.get("key", "")
         subjects = item.get("subject", []) or []
+        description = item.get("description", "") or ""
+        if isinstance(description, dict):
+            description = description.get("value", "")
         out.append({"source":"openlibrary", "source_id":key, "title":item.get("title", ""),
                     "authors":item.get("author_name", []) or [], "year":str(item.get("first_publish_year", "") or ""),
-                    "isbn":next(iter(item.get("isbn", []) or []), ""), "description":"",
+                    "isbn":next(iter(item.get("isbn", []) or []), ""), "description":str(description),
                     "subjects":subjects[:30], "language":", ".join(item.get("language", []) or [])})
     return out
 
@@ -128,11 +156,14 @@ def norm(s: str) -> str:
 
 def choose_candidate(title: str, author: str) -> dict[str, Any] | None:
     candidates = google_search(title, author)
-    # Open Library is a fallback and also useful when Google has no result.
+    # A 429, network error, or empty result from Google must not prevent fallback.
     if not candidates:
+        print("Trying Open Library instead …", file=sys.stderr)
         candidates = openlibrary_search(title, author)
     if not candidates:
-        print("No metadata result found. You can retry with a more distinctive title/author.")
+        print("No metadata result found from Google Books or Open Library.")
+        print("Check your connection, wait if a provider rate-limited requests, or try a shorter title.")
+        print("The book has not been saved yet; you can retry later.")
         return None
     print("\nMatching catalogue records:")
     for i, b in enumerate(candidates, 1):
