@@ -1,67 +1,45 @@
-# Semantic Book Mapper — prototype 0.1
+# BookMap — semantic book shelving prototype
 
-This first prototype lets you manually enter a book's title and author. It creates a multilingual semantic embedding and places the book on a persistent 2D *semantic map*. It saves the embedding and coordinates in a local SQLite database.
+A command-line prototype for manually cataloguing books, enriching them through Google Books (Open Library fallback), embedding descriptions/categories with a multilingual model, and placing books in a 2-D UMAP map.
 
 ## Requirements
 
-- Python 3.10 or newer
-- Internet access on the first run to download the sentence-transformers model
-- A few GB of free disk space is a safe allowance for Python packages and the model
-
-## Setup
+Python 3.10+ recommended. The first run downloads a multilingual sentence-transformer model and may take a while. Metadata lookup requires an internet connection. The program makes no OCR or image-based guesses.
 
 ```bash
 python -m venv .venv
-```
-
-Activate the environment:
-
-- macOS/Linux: `source .venv/bin/activate`
-- Windows PowerShell: `.venv\Scripts\Activate.ps1`
-
-Then install dependencies:
-
-```bash
+# macOS/Linux:
+source .venv/bin/activate
+# Windows PowerShell instead:
+# .venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-```
-
-## Use
-
-Add a book interactively:
-
-```bash
 python library.py add
 ```
 
-Or supply details directly:
+Repeat `python library.py add` for an initial representative batch. For a first trial, use at least 20–50 varied books if possible; UMAP with only a handful is unstable and not very informative. Then fit the initial map:
 
 ```bash
-python library.py add --title "Der Name der Rose" --author "Umberto Eco" --notes "historical mystery, medieval monastery, semiotics"
-```
-
-List all books:
-
-```bash
+python library.py build-map
 python library.py list
+python library.py search "Kant"
 ```
 
-Find a saved book:
+For books added later, use `python library.py add`; the saved UMAP model projects them into the existing map. If a book was saved but projection failed, use `python library.py project-pending`.
 
-```bash
-python library.py find "Eco"
-```
+## Stability and limitations
 
-The database `library.sqlite3` is created beside the script. Back it up along with the script.
+- `library.sqlite3` stores catalogue metadata and assigned coordinates. `map_model.joblib` stores the fitted UMAP transform. Back up both files together.
+- **Do not run `build-map` again casually.** It refits UMAP and may move all existing books. The model is intentionally fixed between map rebuilds.
+- The embedding model is `paraphrase-multilingual-MiniLM-L12-v2`, suitable for German/English similarity experiments. Model upgrades are out of scope for this prototype.
+- UMAP coordinates are relative, arbitrary axes, not literal shelf numbers. Nearby coordinates are a starting point for grouping books into shelf sections.
+- Cross-language equivalence and UMAP quality are not guaranteed. Sparse or missing summaries lead to weaker placement. Inspect the printed nearest neighbours and test on books you know well.
+- The metadata providers may return multiple editions. Choose the correct record from the list. This prototype detects repeat entries by the same provider record ID; it does **not** yet robustly merge different provider records or editions of the same work. Content similarity helps placement, but is not proof of duplicate identity.
+- Google Books is tried first; Open Library is a fallback when Google returns no results. Open Library descriptions are not available for every record. The prototype currently does not combine results from both providers for every book.
+- This is a local prototype, not a polished mobile app. It has not been tested against a real collection yet.
 
-## Important limitations of this prototype
+## Suggested next improvements
 
-1. The 2D coordinates are an incremental *visualization of semantic neighbourhoods*, not physical shelf coordinates. Physical shelf capacity and geometry are not yet modeled.
-2. Existing coordinates are not moved when new books are added. That gives stable lookups, but an incremental map cannot guarantee a globally optimal arrangement for every future book.
-3. Title/author is used as the duplicate key. Different editions with the same title and author may need separate IDs in a later version.
-4. Embeddings depend on the installed model version. The stored vectors and coordinates are reused; do not delete the database if you want to preserve assignments.
-5. For better German book placement, fill in optional notes with a short description, subject, or keywords when the title and author alone are ambiguous.
-6. This is a prototype, not yet a shelf-packing solution. Before physically shelving hundreds of books, we should define the real bookcase/shelf layout and add a placement layer that respects capacity.
-
-## Why this model?
-
-`paraphrase-multilingual-MiniLM-L12-v2` supports German and many other languages. It runs locally after download, so book titles and notes do not need to be sent to an embedding API.
+1. Query both metadata providers and combine the best description/subjects.
+2. Add explicit ISBN/edition/work matching across providers.
+3. Export a CSV/HTML shelf map and allow shelf dimensions and capacity constraints.
+4. Add a review screen showing nearest semantic neighbours before physically shelving.
