@@ -9,7 +9,7 @@ from typing import Any
 
 import requests
 
-from .collection import MediaSpec, run_cli  # imported first: loads .env
+from .collection import MediaSpec  # imported first: loads .env
 
 MUSICBRAINZ_API = "https://musicbrainz.org/ws/2/"
 MUSICBRAINZ_URL = MUSICBRAINZ_API + "release/"
@@ -308,7 +308,3 @@ class MusicSpec(MediaSpec):
 
     def duplicate_key(self, record: dict[str, Any]) -> dict[str, str] | None:
         return {"source_id": record["source_id"]}
-
-
-def main(media_type: str, argv: list[str] | None = None) -> None:
-    run_cli(MusicSpec(media_type), argv)

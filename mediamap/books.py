@@ -13,7 +13,7 @@ from typing import Any
 import requests
 
 from .book_metadata import USER_AGENT, lookup_metadata
-from .collection import MediaSpec, run_cli
+from .collection import MediaSpec
 
 
 def get_json(url: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
@@ -164,7 +164,3 @@ class BookSpec(MediaSpec):
     def warn(self, b: dict[str, Any]) -> None:
         if not b.get("description") and not b.get("subjects"):
             print("Warning: this record has no description or subjects; placement may be weak.")
-
-
-def main(argv: list[str] | None = None) -> None:
-    run_cli(BookSpec(), argv)

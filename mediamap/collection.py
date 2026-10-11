@@ -314,11 +314,9 @@ class Collection:
             print(f"#{row['id']:4} | {self.position(row):<22} | {self.describe(row)}")
 
 
-def run_cli(spec: MediaSpec, argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(
-        description=f"Manage the {spec.label} collection with a frozen {spec.dims}-D semantic map."
-    )
-    sub = parser.add_subparsers(dest="cmd", required=True)
+def add_commands(parser: argparse.ArgumentParser, spec: MediaSpec) -> None:
+    """Attach the collection commands (add, build-map, ...) to a parser."""
+    sub = parser.add_subparsers(dest="cmd", required=True, metavar="<command>")
     sub.add_parser("add", help=spec.add_help)
     build = sub.add_parser("build-map", help="fit the map on the current collection (refits all coordinates)")
     build.add_argument("--neighbors", type=int, default=8, help="UMAP neighborhood size (default: 8)")
@@ -327,8 +325,10 @@ def run_cli(spec: MediaSpec, argv: list[str] | None = None) -> None:
     sub.add_parser("list", help="list items sorted by map position")
     sub.add_parser("project-pending", help="project saved but unmapped items into the frozen map")
     sub.add_parser("refresh", help="fetch metadata that existing items are missing")
-    args = parser.parse_args(argv)
 
+
+def run_command(spec: MediaSpec, args: argparse.Namespace) -> None:
+    """Run the command parsed by a parser built with add_commands."""
     collection = Collection(spec)
     try:
         actions = {
