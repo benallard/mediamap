@@ -48,7 +48,8 @@ uv run mediamap lps list
 
 All collections also support `search QUERY` and `project-pending`. Books use
 Google Books and Open Library. CD and LP lookups use MusicBrainz; results are
-filtered to the requested format when MusicBrainz provides format information.
+not filtered by format, since physical medium does not define an album's
+musical semantics.
 When a CD or LP is projected into an existing map, `add` reports its suggested
 slot between adjacent releases (or before/after an endpoint release).
 Set `BOOKMAP_CONTACT_EMAIL` in `.env` or the shell to identify requests to
@@ -74,9 +75,10 @@ coordinates. Sparse metadata makes placement less meaningful.
 ## Limitations
 
 MusicBrainz may return multiple releases or incomplete format information;
-review the selected release, year, label, and format. The CD and LP maps use
-release title, artist, year, label, format, and track count as their semantic
-description, so albums with sparse metadata may be less precisely placed.
+review the selected release, year, label, and format. The CD and LP maps embed
+available genres, artist, and era; release format, label, and track count are
+excluded because physical release details do not define musical semantics.
+Sparse genre metadata can make placement less precise.
 At least three albums are required to fit a 1D music map.
 Book lookup may also return different editions of the same work; cross-source
 metadata merging does not guarantee edition matching.

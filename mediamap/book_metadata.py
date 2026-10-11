@@ -11,7 +11,7 @@ GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 OPEN_LIBRARY_SEARCH_URL = "https://openlibrary.org/search.json"
 TIMEOUT = 12
 load_dotenv(ROOT / ".env")
-CONTACT_EMAIL = os.environ.get("BOOKMAP_CONTACT_EMAIL", "").strip()
+CONTACT_EMAIL = os.environ.get("MEDIAMAP_CONTACT_EMAIL", "").strip()
 USER_AGENT = "MediaMap/0.1" + (
     f" (contact: {CONTACT_EMAIL})" if CONTACT_EMAIL else " (personal, low-volume use)"
 )

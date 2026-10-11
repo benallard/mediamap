@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 import time
 from typing import Any
@@ -19,14 +18,10 @@ MAX_GENRES = 8
 MIN_GENRES = 3  # fewer release-group genres than this: top up from the artist
 VARIOUS_ARTISTS = "Various Artists"
 USER_AGENT = "MediaMap/0.1" + (
-    f" (contact: {os.environ['BOOKMAP_CONTACT_EMAIL'].strip()})"
-    if os.environ.get("BOOKMAP_CONTACT_EMAIL", "").strip()
+    f" (contact: {os.environ['MEDIAMAP_CONTACT_EMAIL'].strip()})"
+    if os.environ.get("MEDIAMAP_CONTACT_EMAIL", "").strip()
     else " (personal collection)"
 )
-FORMAT_FILTERS = {
-    "cds": re.compile(r"\bcd\b|compact disc", re.IGNORECASE),
-    "lps": re.compile(r"\bvinyl\b|\blp\b", re.IGNORECASE),
-}
 MEDIA_NAMES = {"cds": "CD", "lps": "LP"}
 
 
@@ -65,6 +60,9 @@ def _mb_get(url: str, params: dict[str, Any]) -> Any:
         )
         response.raise_for_status()
         return response.json()
+    except requests.HTTPError as exc:
+        print(f"MusicBrainz API error: {exc}", file=sys.stderr)
+        print(exc.response.json(), file=sys.stderr)
     finally:
         _last_request = time.monotonic()
 
@@ -115,7 +113,8 @@ def _load_genres(raw: str) -> list[str]:
     return [str(g) for g in value] if isinstance(value, list) else []
 
 
-def search_releases(media_type: str, title: str, artist: str) -> list[dict[str, Any]]:
+def search_releases(title: str, artist: str) -> list[dict[str, Any]]:
+    """Return matching releases without filtering by physical medium."""
     query = f'release:"{title}"'
     if artist:
         query += f' AND artist:"{artist}"'
@@ -133,9 +132,7 @@ def search_releases(media_type: str, title: str, artist: str) -> list[dict[str, 
         print("MusicBrainz response did not contain a release list.", file=sys.stderr)
         return []
 
-    formatted = []
-    unformatted = []
-    format_pattern = FORMAT_FILTERS[media_type]
+    records = []
     for release in releases:
         if not isinstance(release, dict):
             continue
@@ -163,18 +160,12 @@ def search_releases(media_type: str, title: str, artist: str) -> list[dict[str, 
         }
         if not record["source_id"]:
             continue
-        if formats and any(format_pattern.search(value) for value in formats):
-            formatted.append(record)
-        elif not formats:
-            unformatted.append(record)
-
-    # Prefer records explicitly matching the physical format. If MusicBrainz
-    # has no format data for the search results, still offer those records.
-    return formatted or unformatted
+        records.append(record)
+    return records
 
 
 def choose_album(media_type: str, title: str, artist: str) -> dict[str, Any] | None:
-    records = search_releases(media_type, title, artist)
+    records = search_releases(title, artist)
     if not records:
         print(f"No {MEDIA_NAMES[media_type]} release matched in MusicBrainz.")
         print("Try a different title or artist; no album has been saved.")

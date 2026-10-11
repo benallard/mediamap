@@ -125,20 +125,21 @@ class MediaCatalogueTests(unittest.TestCase):
 
     # -- MusicBrainz search ----------------------------------------------
     @patch("mediamap.music.requests.get")
-    def test_release_search_filters_by_requested_physical_format(self, get):
+    def test_release_search_includes_all_physical_formats(self, get):
         get.return_value = self._musicbrainz_response([
             self._release("cd-release", "CD", "CD release"),
             self._release("lp-release", '12" Vinyl', "LP release"),
             self._release("unknown-release", None, "Unknown format"),
         ])
 
-        cds = music.search_releases("cds", "Album", "Artist")
-        lps = music.search_releases("lps", "Album", "Artist")
+        records = music.search_releases("Album", "Artist")
 
-        self.assertEqual([record["source_id"] for record in cds], ["cd-release"])
-        self.assertEqual([record["source_id"] for record in lps], ["lp-release"])
-        self.assertEqual(cds[0]["track_count"], 10)
-        self.assertEqual(cds[0]["artists"], ["Artist"])
+        self.assertEqual(
+            [record["source_id"] for record in records],
+            ["cd-release", "lp-release", "unknown-release"],
+        )
+        self.assertEqual(records[0]["track_count"], 10)
+        self.assertEqual(records[0]["artists"], ["Artist"])
 
     @patch("mediamap.music.requests.get")
     def test_unreported_formats_remain_selectable(self, get):
@@ -146,7 +147,7 @@ class MediaCatalogueTests(unittest.TestCase):
             self._release("unknown-release", None, "Unknown format"),
         ])
 
-        records = music.search_releases("lps", "Album", "Artist")
+        records = music.search_releases("Album", "Artist")
 
         self.assertEqual([record["source_id"] for record in records], ["unknown-release"])
 
@@ -157,7 +158,7 @@ class MediaCatalogueTests(unittest.TestCase):
         release["artist-credit"] = [{"name": "Artist", "artist": {"id": "art-1", "name": "Artist"}}]
         get.return_value = self._musicbrainz_response([release])
 
-        record = music.search_releases("cds", "Album", "Artist")[0]
+        record = music.search_releases("Album", "Artist")[0]
 
         self.assertEqual((record["release_group_id"], record["artist_id"]), ("rg-1", "art-1"))
 
