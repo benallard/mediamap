@@ -19,6 +19,8 @@ Metadata lookups need an internet connection. On the first map operation,
 MediaMap downloads its sentence-transformer model from Hugging Face and saves
 it under `models/`; future runs use that local copy. To enable a Google Books
 API key, add `GOOGLE_BOOKS_API_KEY=your_key` to a project-root `.env` file.
+MusicBrainz identifies CD/LP releases; optional album tags come from Last.fm
+when `MEDIAMAP_LASTFM_API_KEY=your_key` is configured there or in the shell.
 You can also export the key in your shell. Keep `.env` private and do not
 commit it.
 
@@ -57,9 +59,9 @@ catalogue, and rebuild the map.
 ```
 
 All collections also support `search QUERY` and `project-pending`. Books use
-Google Books and Open Library. CD and LP lookups use MusicBrainz; results are
-not filtered by format, since physical medium does not define an album's
-musical semantics.
+Google Books and Open Library. CD and LP identification uses MusicBrainz;
+results are not filtered by format, since physical medium does not define an
+album's musical semantics.
 When a CD or LP is projected into an existing map, `add` reports its suggested
 slot between adjacent releases (or before/after an endpoint release).
 Set `BOOKMAP_CONTACT_EMAIL` in `.env` or the shell to identify requests to
@@ -86,9 +88,11 @@ coordinates. Sparse metadata makes placement less meaningful.
 
 MusicBrainz may return multiple releases or incomplete format information;
 review the selected release, year, label, and format. The CD and LP maps embed
-available genres, artist, and era; release format, label, and track count are
-excluded because physical release details do not define musical semantics.
-Sparse genre metadata can make placement less precise.
+available MusicBrainz genres, Last.fm album tags, artist, and era; release
+format, label, and track count are excluded because physical release details do
+not define musical semantics.
+Sparse genre/tag metadata can make placement less precise. Run `refresh` after
+configuring a Last.fm key to backfill tags for existing CDs and LPs.
 At least three albums are required to fit a 1D music map.
 Book lookup may also return different editions of the same work; cross-source
 metadata merging does not guarantee edition matching.

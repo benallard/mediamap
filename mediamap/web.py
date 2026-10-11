@@ -8,7 +8,7 @@ from typing import Any, Iterator
 from urllib.parse import urlparse
 
 from .collection import Collection, MediaSpec
-from .music import MusicBrainzError, fetch_genres, search_releases
+from .music import MusicBrainzError, fetch_genres, fetch_lastfm_tags, search_releases
 
 _build_lock = threading.Lock()
 _build_status: dict[str, Any] = {"running": False, "message": ""}
@@ -121,7 +121,8 @@ async function loadRecords() {
     const info = document.createElement('div');
     const name = document.createElement('div'); name.className = 'name'; name.textContent = record.title;
     const sub = document.createElement('div'); sub.className = 'details';
-    sub.textContent = [record.artists, record.year, record.genres.join(', ')].filter(Boolean).join(' · ');
+    sub.textContent = [record.artists, record.year, record.genres.join(', '),
+      record.tags.length ? `Tags: ${record.tags.join(', ')}` : ''].filter(Boolean).join(' · ');
     info.append(name, sub);
     const pos = document.createElement('span'); pos.className = 'position';
     pos.textContent = record.x === null ? 'not mapped' : Number(record.x).toFixed(3);
@@ -286,6 +287,7 @@ class MediaMapHandler(BaseHTTPRequestHandler):
                     {"id": row["id"], "title": row["title"], "artists": row[self.spec.creators_col],
                      "year": row["year"], "release_format": row["release_format"], "label": row["label"],
                      "country": row["country"], "genres": _read_genres(row["genres"]),
+                     "tags": _read_genres(row["lastfm_tags"]),
                      "x": row[cols[0]]}
                     for row in rows
                 ]
@@ -334,13 +336,14 @@ class MediaMapHandler(BaseHTTPRequestHandler):
             if not isinstance(genres, list) or not all(isinstance(genre, str) for genre in genres):
                 self._send_json(400, {"error": "Genres must be a list of names."})
                 return
-            record = {key: record.get(key, "") for key in (
+            record: dict[str, Any] = {key: record.get(key, "") for key in (
                 "source_id", "title", "artists", "year", "label", "release_format",
                 "country", "barcode", "release_group_id", "artist_id",
             )}
             record["genres"] = [genre.strip().lower() for genre in genres if genre.strip()]
             if not record["genres"]:
                 record["genres"] = fetch_genres(record["release_group_id"], record["artist_id"])
+            record["lastfm_tags"] = fetch_lastfm_tags(", ".join(record["artists"]), record["title"])
             with _open_collection(self.spec) as collection:
                 item_id = collection.add_record(record, enrich=False)
             if item_id is None:

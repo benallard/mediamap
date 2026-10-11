@@ -12,9 +12,11 @@ from .collection import MediaSpec  # imported first: loads .env
 
 MUSICBRAINZ_API = "https://musicbrainz.org/ws/2/"
 MUSICBRAINZ_URL = MUSICBRAINZ_API + "release/"
+LASTFM_API_URL = "https://ws.audioscrobbler.com/2.0/"
 TIMEOUT = 15
 MIN_INTERVAL = 1.1  # MusicBrainz allows about one request per second
 MAX_GENRES = 8
+MAX_TAGS = 8
 MIN_GENRES = 3  # fewer release-group genres than this: top up from the artist
 VARIOUS_ARTISTS = "Various Artists"
 USER_AGENT = "MediaMap/0.1" + (
@@ -107,6 +109,68 @@ def fetch_genres(release_group_id: str, artist_id: str) -> list[str] | None:
             return None
         genres += [g for g in extra if g not in genres]
     return genres[:MAX_GENRES]
+
+
+def fetch_lastfm_tags(artist: str, album: str) -> list[str] | None:
+    """Album tags from Last.fm; None means lookup could not be completed."""
+    api_key = os.environ.get("MEDIAMAP_LASTFM_API_KEY", "").strip()
+    if not api_key:
+        print(
+            "Last.fm tags unavailable; set MEDIAMAP_LASTFM_API_KEY to enable them.",
+            file=sys.stderr,
+        )
+        return None
+    if not artist.strip() or not album.strip():
+        return []
+
+    try:
+        response = requests.get(
+            LASTFM_API_URL,
+            params={
+                "method": "album.getTopTags",
+                "api_key": api_key,
+                "artist": artist,
+                "album": album,
+                "autocorrect": 1,
+                "format": "json",
+            },
+            headers={"Accept": "application/json"},
+            timeout=TIMEOUT,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("Last.fm returned an invalid JSON document.")
+        if "error" in payload:
+            raise ValueError(f"Last.fm API error {payload['error']}.")
+        tags = payload.get("toptags", {}).get("tag", [])
+        if isinstance(tags, dict):
+            tags = [tags]
+        if not isinstance(tags, list):
+            raise ValueError("Last.fm returned an invalid tag list.")
+    except (requests.RequestException, ValueError, AttributeError) as exc:
+        print(f"Last.fm album-tag lookup failed ({type(exc).__name__}).", file=sys.stderr)
+        return None
+
+    def tag_count(tag: dict[str, Any]) -> int:
+        try:
+            return int(tag.get("count") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    ranked = sorted(
+        (tag for tag in tags if isinstance(tag, dict) and tag.get("name")),
+        key=tag_count,
+        reverse=True,
+    )
+    result = []
+    for tag in ranked:
+        name = str(tag["name"]).strip().lower()
+        if name and name not in result:
+            result.append(name)
+        if len(result) == MAX_TAGS:
+            break
+    return result
 
 
 def _load_genres(raw: str) -> list[str]:
@@ -211,11 +275,12 @@ def _decade(year: str) -> str:
 
 
 def _semantic_text(record: dict[str, Any]) -> str:
-    """Genre-led text for the embedder. Label, format and track count are left
-    out on purpose: they say nothing about how a record sounds."""
+    """Genre/tag-led text; physical release details do not describe its sound."""
     parts = []
     if record.get("genres"):
         parts.append("Genres: " + ", ".join(record["genres"]))
+    if record.get("lastfm_tags"):
+        parts.append("Tags: " + ", ".join(record["lastfm_tags"]))
     if record["artists"]:
         parts.append("Artist: " + ", ".join(record["artists"]))
     if _decade(record["year"]):
@@ -230,6 +295,7 @@ class MusicSpec(MediaSpec):
         "label", "release_format", "country", "barcode", "source_id",
         "release_group_id",
         "genres",  # JSON list; "" = never fetched, "[]" = none found
+        "lastfm_tags",  # JSON list; "" = never fetched, "[]" = none found
     )
     unique = "source_id"
     dims = 1
@@ -257,8 +323,14 @@ class MusicSpec(MediaSpec):
     def enrich(self, record: dict[str, Any]) -> None:
         print("Looking up genres …")
         record["genres"] = fetch_genres(record["release_group_id"], record["artist_id"])
+        record["lastfm_tags"] = fetch_lastfm_tags(
+            ", ".join(record["artists"]), record["title"]
+        )
         if record["genres"]:
             print("Genres: " + ", ".join(record["genres"]))
+        if record["lastfm_tags"]:
+            print("Last.fm tags: " + ", ".join(record["lastfm_tags"]))
+        if record["genres"] or record["lastfm_tags"]:
             return
         raw = input("No genres found. Enter some (comma-separated), or press Enter to skip: ")
         manual = [g.strip().lower() for g in raw.split(",") if g.strip()]
@@ -267,8 +339,10 @@ class MusicSpec(MediaSpec):
         # else: stays [] (nothing exists) or None (lookup failed; `refresh` retries)
 
     def warn(self, record: dict[str, Any]) -> None:
-        if not record.get("genres"):
-            print("Warning: no genres for this release; placement will be weak.")
+        if not record.get("genres") and not record.get("lastfm_tags"):
+            print(
+                "Warning: no genres or Last.fm tags for this release; placement will be weak."
+            )
 
     def text_from_row(self, row: Any) -> str | None:
         return _semantic_text({
@@ -276,24 +350,32 @@ class MusicSpec(MediaSpec):
             "artists": [row["artists"]] if row["artists"] else [],
             "year": row["year"],
             "genres": _load_genres(row["genres"]),
+            "lastfm_tags": _load_genres(row["lastfm_tags"]),
         })
 
     def refresh_row(self, row: Any) -> dict[str, Any] | None:
-        if row["genres"] != "":  # already fetched, or entered by hand
-            return None
-        try:
-            release = _mb_get(
-                f"{MUSICBRAINZ_URL}{row['source_id']}",
-                {"inc": "release-groups artist-credits"},
-            )
-        except (requests.RequestException, ValueError) as exc:
-            print(f"MusicBrainz release lookup failed: {exc}", file=sys.stderr)
-            return None
-        group_id = str((release.get("release-group") or {}).get("id") or "")
-        genres = fetch_genres(group_id, _artist_id(release))
-        if genres is None:
-            return None
-        return {"release_group_id": group_id, "genres": json.dumps(genres)}
+        updates: dict[str, Any] = {}
+        if row["genres"] == "":
+            try:
+                release = _mb_get(
+                    f"{MUSICBRAINZ_URL}{row['source_id']}",
+                    {"inc": "release-groups artist-credits"},
+                )
+            except (requests.RequestException, ValueError) as exc:
+                print(f"MusicBrainz release lookup failed: {exc}", file=sys.stderr)
+            else:
+                group_id = str((release.get("release-group") or {}).get("id") or "")
+                genres = fetch_genres(group_id, _artist_id(release))
+                if genres is not None:
+                    updates["release_group_id"] = group_id
+                    updates["genres"] = json.dumps(genres)
+
+        if row["lastfm_tags"] == "":
+            tags = fetch_lastfm_tags(row["artists"], row["title"])
+            if tags is not None:
+                updates["lastfm_tags"] = json.dumps(tags)
+
+        return updates or None
 
     def to_row(self, record: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -307,6 +389,8 @@ class MusicSpec(MediaSpec):
             "source_id": record["source_id"],
             "release_group_id": record["release_group_id"],
             "genres": "" if record.get("genres") is None else json.dumps(record["genres"]),
+            "lastfm_tags": "" if record.get("lastfm_tags") is None
+            else json.dumps(record["lastfm_tags"]),
         }
 
     def duplicate_key(self, record: dict[str, Any]) -> dict[str, str] | None:

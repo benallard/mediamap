@@ -93,9 +93,10 @@ class MediaCatalogueTests(unittest.TestCase):
         col.db.commit()
 
     def add_record(self, col, record, genres=("post-punk",)):
-        """Run `add` with the MusicBrainz parts mocked; returns the fetch_genres mock."""
+        """Run `add` with provider lookups mocked; return the genre lookup mock."""
         with patch.object(music, "choose_album", side_effect=lambda *args: dict(record)), \
                 patch.object(music, "fetch_genres", return_value=list(genres)) as fetch, \
+                patch.object(music, "fetch_lastfm_tags", return_value=[]), \
                 patch("builtins.input", side_effect=["title", "artist"]):
             col.add()
         return fetch
@@ -122,7 +123,7 @@ class MediaCatalogueTests(unittest.TestCase):
         col = self.open_collection(spec)
 
         columns = {row["name"] for row in col.db.execute("PRAGMA table_info(albums)")}
-        self.assertLessEqual({"genres", "release_group_id"}, columns)
+        self.assertLessEqual({"genres", "lastfm_tags", "release_group_id"}, columns)
         self.assertEqual(count(col), 1)
 
     # -- MusicBrainz search ----------------------------------------------
@@ -212,6 +213,13 @@ class MediaCatalogueTests(unittest.TestCase):
         bare = {"title": "Untitled", "artists": [], "year": "", "genres": []}
         self.assertEqual(music._semantic_text(bare), "Album: Untitled")
 
+    def test_semantic_text_includes_lastfm_tags_separately(self):
+        record = album_record(genres=["trip-hop"], lastfm_tags=["instrumental", "downtempo"])
+        self.assertEqual(
+            music._semantic_text(record),
+            "Genres: trip-hop\nTags: instrumental, downtempo\nArtist: Joy Division\nEra: 1970s",
+        )
+
     @patch("mediamap.music._mb_get")
     def test_fetch_genres(self, mb_get):
         data = {
@@ -227,6 +235,33 @@ class MediaCatalogueTests(unittest.TestCase):
         mb_get.side_effect = requests.ConnectionError("down")
         self.assertIsNone(music.fetch_genres("rg", "art"))
 
+    @patch.dict("os.environ", {"MEDIAMAP_LASTFM_API_KEY": "test-key"})
+    @patch("mediamap.music.requests.get")
+    def test_fetch_lastfm_album_tags(self, get):
+        response = Mock()
+        response.json.return_value = {
+            "toptags": {"tag": [
+                {"name": "Trip-Hop", "count": 3},
+                {"name": "Electronic", "count": 12},
+                {"name": "trip-hop", "count": 2},
+            ]}
+        }
+        response.raise_for_status.return_value = None
+        get.return_value = response
+
+        self.assertEqual(
+            music.fetch_lastfm_tags("Wax Tailor", "In the Mood for Life"),
+            ["electronic", "trip-hop"],
+        )
+        self.assertEqual(get.call_args.kwargs["params"]["method"], "album.getTopTags")
+        self.assertEqual(get.call_args.kwargs["params"]["artist"], "Wax Tailor")
+
+    @patch.dict("os.environ", {"MEDIAMAP_LASTFM_API_KEY": ""})
+    @patch("mediamap.music.requests.get")
+    def test_missing_lastfm_key_leaves_album_tags_retryable(self, get):
+        self.assertIsNone(music.fetch_lastfm_tags("Artist", "Album"))
+        get.assert_not_called()
+
     # -- adding / projecting ---------------------------------------------
     def test_add_stores_genres_and_skips_lookups_for_duplicates(self):
         col = self.open_collection(music.MusicSpec("cds"))
@@ -240,6 +275,7 @@ class MediaCatalogueTests(unittest.TestCase):
         self.assertEqual(json.loads(row["genres"]), ["post-punk"])
         self.assertEqual(row["release_group_id"], "rg")
         self.assertIn("Genres: post-punk", row["semantic_text"])
+        self.assertEqual(json.loads(row["lastfm_tags"]), [])
 
     def test_web_add_route_saves_selected_release_and_lists_it(self):
         spec = music.MusicSpec("lps")
@@ -252,7 +288,8 @@ class MediaCatalogueTests(unittest.TestCase):
         thread.start()
         connection = HTTPConnection("127.0.0.1", server.server_port)
         try:
-            with patch.object(web, "fetch_genres", return_value=["post-punk"]):
+            with patch.object(web, "fetch_genres", return_value=["post-punk"]), \
+                    patch.object(web, "fetch_lastfm_tags", return_value=["instrumental"]):
                 connection.request(
                     "POST", "/api/albums",
                     body=json.dumps({"record": album_record(), "genres": []}),
@@ -268,6 +305,7 @@ class MediaCatalogueTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertEqual(albums[0]["title"], "Unknown Pleasures")
             self.assertEqual(albums[0]["genres"], ["post-punk"])
+            self.assertEqual(albums[0]["tags"], ["instrumental"])
         finally:
             connection.close()
             server.shutdown()
@@ -292,8 +330,9 @@ class MediaCatalogueTests(unittest.TestCase):
             output.getvalue(),
         )
 
+    @patch("mediamap.music.fetch_lastfm_tags", return_value=["trip-hop"])
     @patch("mediamap.music._mb_get")
-    def test_refresh_backfills_missing_genres_once(self, mb_get):
+    def test_refresh_backfills_missing_metadata_once(self, mb_get, lastfm_tags):
         col = self.open_collection(music.MusicSpec("cds"))
         col.db.executemany(
             "INSERT INTO albums(title,artists,year,source_id,genres) VALUES(?,?,?,?,?)",
@@ -316,18 +355,22 @@ class MediaCatalogueTests(unittest.TestCase):
         mb_get.side_effect = genres_down
         col.refresh()
         self.assertEqual(stored("rel-a")["genres"], "")  # failure leaves it retryable
+        self.assertEqual(json.loads(stored("rel-a")["lastfm_tags"]), ["trip-hop"])
 
         mb_get.side_effect = lambda url, params: release if "/release/" in url else genres
         mb_get.reset_mock()
         col.refresh()
         self.assertEqual(json.loads(stored("rel-a")["genres"]), ["post-punk", "new wave", "goth"])
-        self.assertTrue(stored("rel-a")["semantic_text"].startswith("Genres:"))
+        self.assertIn("Tags: trip-hop", stored("rel-a")["semantic_text"])
         self.assertEqual(stored("rel-b")["genres"], '["jazz"]')  # untouched
+        self.assertEqual(json.loads(stored("rel-b")["lastfm_tags"]), ["trip-hop"])
+        self.assertIn("Tags: trip-hop", stored("rel-b")["semantic_text"])
         self.assertEqual(mb_get.call_count, 2)  # release lookup + release-group genres
 
         mb_get.reset_mock()
         col.refresh()
         mb_get.assert_not_called()
+        self.assertEqual(lastfm_tags.call_count, 2)
 
     # -- maps -------------------------------------------------------------
     @patch("mediamap.collection.encode_texts", new=fake_encode)
