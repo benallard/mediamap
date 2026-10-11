@@ -16,6 +16,11 @@ python -m pip install -r requirements.txt
 python library.py add
 ```
 
+To use a Google Books API key, put `GOOGLE_BOOKS_API_KEY=your_key` in a
+project-root `.env` file. The app loads that file at startup; alternatively,
+export `GOOGLE_BOOKS_API_KEY` in the shell before running the app. Keep the key
+private and do not commit `.env`.
+
 Repeat `python library.py add` for an initial representative batch. For a first trial, use at least 20–50 varied books if possible; UMAP with only a handful is unstable and not very informative. Then fit the initial map:
 
 ```bash
@@ -33,13 +38,12 @@ For books added later, use `python library.py add`; the saved UMAP model project
 - The embedding model is `paraphrase-multilingual-MiniLM-L12-v2`, suitable for German/English similarity experiments. Model upgrades are out of scope for this prototype.
 - UMAP coordinates are relative, arbitrary axes, not literal shelf numbers. Nearby coordinates are a starting point for grouping books into shelf sections.
 - Cross-language equivalence and UMAP quality are not guaranteed. Sparse or missing summaries lead to weaker placement. Inspect the printed nearest neighbours and test on books you know well.
-- The metadata providers may return multiple editions. Choose the correct record from the list. This prototype detects repeat entries by the same provider record ID; it does **not** yet robustly merge different provider records or editions of the same work. Content similarity helps placement, but is not proof of duplicate identity.
-- Google Books is tried first; if it is rate-limited (HTTP 429), fails, or returns no matches, the program tries Open Library. If Open Library’s structured title/author search returns no matches, it tries one broader combined query. Open Library descriptions are not available for every record. The prototype currently does not combine results from both providers for every book. Open Library requests identify the app with a User-Agent; you can optionally set `BOOKMAP_CONTACT_EMAIL` to include a contact address as requested by Open Library.
+- The metadata providers may return multiple editions. The app merges the best Google Books and Open Library matches into one result, but does **not** robustly merge different editions of the same work. Content similarity helps placement, but is not proof of duplicate identity.
+- Google Books and Open Library are queried for each lookup; results are merged, and an unavailable or rate-limited provider does not prevent using the other. HTTP 429 diagnostics include relevant response headers and the response body when provided. Open Library requests identify the app with a User-Agent; you can optionally set `BOOKMAP_CONTACT_EMAIL` to include a contact address as requested by Open Library.
 - This is a local prototype, not a polished mobile app. It has not been tested against a real collection yet.
 
 ## Suggested next improvements
 
-1. Query both metadata providers and combine the best description/subjects.
-2. Add explicit ISBN/edition/work matching across providers.
-3. Export a CSV/HTML shelf map and allow shelf dimensions and capacity constraints.
-4. Add a review screen showing nearest semantic neighbours before physically shelving.
+1. Add explicit ISBN/edition/work matching across providers.
+2. Export a CSV/HTML shelf map and allow shelf dimensions and capacity constraints.
+3. Add a review screen showing nearest semantic neighbours before physically shelving.

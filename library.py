@@ -18,21 +18,17 @@ import re
 import sqlite3
 import sys
 import time
-import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import requests
+from metadata import USER_AGENT, lookup_metadata
 
 HERE = Path(__file__).resolve().parent
 DB_PATH = HERE / "library.sqlite3"
 MODEL_PATH = HERE / "map_model.joblib"
 EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-# Open Library asks API clients to identify themselves. Set BOOKMAP_CONTACT_EMAIL
-# in your environment to include a contact address in the User-Agent.
-CONTACT_EMAIL = os.environ.get("BOOKMAP_CONTACT_EMAIL", "").strip()
-USER_AGENT = "BookMapPersonalLibrary/0.2" + (f" (contact: {CONTACT_EMAIL})" if CONTACT_EMAIL else " (personal, low-volume use)")
 
 
 def connect() -> sqlite3.Connection:
@@ -67,61 +63,28 @@ def get_json(url: str, params: dict[str, Any] | None = None) -> dict[str, Any] |
             "Accept": "application/json",
         })
         if r.status_code == 429:
-            retry_after = r.headers.get("Retry-After")
-            suffix = f" Retry-After: {retry_after}." if retry_after else ""
-            print(f"Metadata provider rate-limited this request (HTTP 429): {url}.{suffix}", file=sys.stderr)
+            relevant_headers = {
+                name: value
+                for name, value in r.headers.items()
+                if name.lower() in {"date", "content-type", "retry-after", "www-authenticate", "server"}
+                or any(term in name.lower() for term in ("rate", "quota"))
+                or name.lower().startswith(("x-goog-", "x-google-"))
+            }
+            header_details = ", ".join(
+                f"{name}: {value}" for name, value in sorted(relevant_headers.items())
+            )
+            suffix = f" Relevant headers: {header_details}." if header_details else ""
+            body = r.text.strip()
+            body_suffix = f" Response body: {body[:2000]}" if body else ""
+            if len(body) > 2000:
+                body_suffix += "…"
+            print(f"Metadata provider rate-limited this request (HTTP 429): {url}.{suffix}{body_suffix}", file=sys.stderr)
             return None  # Do not hammer the provider; caller can try the next source.
         r.raise_for_status()
         return r.json()
     except (requests.RequestException, ValueError) as e:
         print(f"Metadata lookup failed for {url}: {e}", file=sys.stderr)
         return None
-
-
-def google_search(title: str, author: str) -> list[dict[str, Any]]:
-    q = f'intitle:"{title}"' + (f' inauthor:"{author}"' if author else '')
-    data = get_json("https://www.googleapis.com/books/v1/volumes", {"q": q, "maxResults": 10, "printType": "books"})
-    out = []
-    for item in (data or {}).get("items", []):
-        v = item.get("volumeInfo", {})
-        ids = v.get("industryIdentifiers", [])
-        isbn = next((x.get("identifier", "") for x in ids if x.get("type") == "ISBN_13"), "")
-        out.append({"source":"google", "source_id":item.get("id", ""), "title":v.get("title", ""),
-                    "authors":v.get("authors", []), "year":v.get("publishedDate", "")[:4], "isbn":isbn,
-                    "description":v.get("description", ""), "subjects":v.get("categories", []),
-                    "language":v.get("language", "")})
-    return out
-
-
-def openlibrary_search(title: str, author: str) -> list[dict[str, Any]]:
-    """Search Open Library, trying structured fields before a combined text query."""
-    base = "https://openlibrary.org/search.json"
-    fields = "key,title,author_name,first_publish_year,isbn,subject,language,description"
-    params: dict[str, Any] = {"title": title, "limit": 10, "fields": fields}
-    if author:
-        params["author"] = author
-    data = get_json(base, params)
-    docs = (data or {}).get("docs", [])
-
-    # Some title/author combinations are too restrictive in the structured search.
-    # Try one broader query only if the first search succeeded but returned no matches.
-    if data is not None and not docs:
-        query = f'"{title}" {author}'.strip()
-        data = get_json(base, {"q": query, "limit": 10, "fields": fields})
-        docs = (data or {}).get("docs", [])
-
-    out = []
-    for item in docs:
-        key = item.get("key", "")
-        subjects = item.get("subject", []) or []
-        description = item.get("description", "") or ""
-        if isinstance(description, dict):
-            description = description.get("value", "")
-        out.append({"source":"openlibrary", "source_id":key, "title":item.get("title", ""),
-                    "authors":item.get("author_name", []) or [], "year":str(item.get("first_publish_year", "") or ""),
-                    "isbn":next(iter(item.get("isbn", []) or []), ""), "description":str(description),
-                    "subjects":subjects[:30], "language":", ".join(item.get("language", []) or [])})
-    return out
 
 
 def enrich_openlibrary(book: dict[str, Any]) -> dict[str, Any]:
@@ -155,20 +118,37 @@ def norm(s: str) -> str:
 
 
 def choose_candidate(title: str, author: str) -> dict[str, Any] | None:
-    candidates = google_search(title, author)
-    # A 429, network error, or empty result from Google must not prevent fallback.
-    if not candidates:
-        print("Trying Open Library instead …", file=sys.stderr)
-        candidates = openlibrary_search(title, author)
-    if not candidates:
+    metadata = lookup_metadata(title=title, author=author)
+    if not metadata["sources"]:
         print("No metadata result found from Google Books or Open Library.")
         print("Check your connection, wait if a provider rate-limited requests, or try a shorter title.")
         print("The book has not been saved yet; you can retry later.")
         return None
+
+    source_ids = metadata.get("source_ids", {})
+    source = next(
+        (provider for provider in metadata["sources"] if source_ids.get(provider)),
+        metadata["sources"][0],
+    )
+    published_date = metadata.get("published_date") or ""
+    candidate = {
+        "source": source,
+        "source_id": source_ids.get(source, ""),
+        "display_source": " + ".join(metadata["sources"]),
+        "title": metadata.get("title") or title,
+        "authors": metadata.get("authors") or ([author] if author else []),
+        "year": published_date[:4],
+        "isbn": metadata.get("isbn_13") or metadata.get("isbn_10") or "",
+        "description": metadata.get("description") or "",
+        "subjects": metadata.get("subjects") or [],
+        "language": metadata.get("language") or "",
+    }
+    candidates = [candidate]
+
     print("\nMatching catalogue records:")
     for i, b in enumerate(candidates, 1):
         authors = ", ".join(b["authors"]) or "author unknown"
-        print(f" {i:2}. {b['title']} — {authors} ({b['year'] or 'year unknown'}; {b['source']})")
+        print(f" {i:2}. {b['title']} — {authors} ({b['year'] or 'year unknown'}; {b.get('display_source', b['source'])})")
         if b.get("description"):
             snippet = re.sub(r"\s+", " ", b["description"])
             print("     " + (snippet[:210] + ("…" if len(snippet) > 210 else "")))
