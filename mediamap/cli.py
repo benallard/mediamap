@@ -5,6 +5,7 @@ import argparse
 from .books import BookSpec
 from .collection import MediaSpec, add_commands, run_command
 from .music import MusicSpec
+from .web import serve
 
 # One line per collection: adding a media type means adding a spec here.
 COLLECTIONS: dict[str, MediaSpec] = {
@@ -35,5 +36,8 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.collection is None:
         parser.print_help()
+        return
+    if args.cmd == "web":
+        serve(COLLECTIONS[args.collection], args.host, args.port)
         return
     run_command(COLLECTIONS[args.collection], args)

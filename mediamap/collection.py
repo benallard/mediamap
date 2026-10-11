@@ -147,13 +147,19 @@ class Collection:
         record = spec.prompt_and_choose()
         if not record:
             return
+        self.add_record(record)
+
+    def add_record(self, record: dict[str, Any], *, enrich: bool = True) -> int | None:
+        """Save a selected record, optionally running its interactive enrichment."""
+        spec = self.spec
         old = self._find_duplicate(record)
         if old:
             print(f"Already in this collection: {self.describe(old)}")
             print(f"  Position: {self.position(old)}")
-            return
+            return None
 
-        spec.enrich(record)
+        if enrich:
+            spec.enrich(record)
         spec.warn(record)
         text = spec.semantic_text(record)
         values = {**spec.to_row(record), "semantic_text": text}
@@ -168,12 +174,13 @@ class Collection:
 
         if not spec.model_path.exists():
             print("No map exists yet. Add a representative batch, then run `build-map`.")
-            return
+            return item_id
         try:
             self._project(item_id, text)
         except Exception as exc:  # the item is already saved; keep it
             print(f"Could not project into the existing map: {exc}")
             print("Saved without coordinates. Run `project-pending` after resolving the issue.")
+        return item_id
 
     def _project(self, item_id: int, text: str) -> None:
         spec = self.spec
@@ -325,6 +332,10 @@ def add_commands(parser: argparse.ArgumentParser, spec: MediaSpec) -> None:
     sub.add_parser("list", help="list items sorted by map position")
     sub.add_parser("project-pending", help="project saved but unmapped items into the frozen map")
     sub.add_parser("refresh", help="fetch metadata that existing items are missing")
+    if getattr(spec, "media_type", None) == "lps":
+        web = sub.add_parser("web", help="open a mobile-friendly LP catalogue")
+        web.add_argument("--host", default="0.0.0.0", help="interface to listen on")
+        web.add_argument("--port", type=int, default=8765, help="web interface port")
 
 
 def run_command(spec: MediaSpec, args: argparse.Namespace) -> None:

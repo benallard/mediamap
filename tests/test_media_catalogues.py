@@ -4,8 +4,10 @@ import io
 import json
 import sqlite3
 import sys
+import threading
 import tempfile
 import unittest
+from http.client import HTTPConnection
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -13,7 +15,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 import requests
 
-from mediamap import books, cli, collection, music, reduction
+from mediamap import books, cli, collection, music, reduction, web
 
 
 class FakeReducer:
@@ -201,6 +203,39 @@ class MediaCatalogueTests(unittest.TestCase):
         self.assertEqual(json.loads(row["genres"]), ["post-punk"])
         self.assertEqual(row["release_group_id"], "rg")
         self.assertIn("Genres: post-punk", row["semantic_text"])
+
+    def test_web_add_route_saves_selected_release_and_lists_it(self):
+        spec = music.MusicSpec("lps")
+        handler = type(
+            "TestLPHandler", (web.MediaMapHandler,),
+            {"spec": spec, "log_message": lambda *args: None},
+        )
+        server = web.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        connection = HTTPConnection("127.0.0.1", server.server_port)
+        try:
+            with patch.object(web, "fetch_genres", return_value=["post-punk"]):
+                connection.request(
+                    "POST", "/api/albums",
+                    body=json.dumps({"record": album_record(), "genres": []}),
+                    headers={"Content-Type": "application/json"},
+                )
+                response = connection.getresponse()
+                self.assertEqual(response.status, 201)
+                self.assertEqual(json.loads(response.read())["id"], 1)
+
+            connection.request("GET", "/api/albums")
+            response = connection.getresponse()
+            albums = json.loads(response.read())
+            self.assertEqual(response.status, 200)
+            self.assertEqual(albums[0]["title"], "Unknown Pleasures")
+            self.assertEqual(albums[0]["genres"], ["post-punk"])
+        finally:
+            connection.close()
+            server.shutdown()
+            thread.join()
+            server.server_close()
 
     @patch("mediamap.collection.encode_texts", new=fake_encode)
     @patch.dict(sys.modules, FAKE_UMAP)

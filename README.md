@@ -44,6 +44,16 @@ uv run mediamap cds build-map
 uv run mediamap cds list
 uv run mediamap lps build-map
 uv run mediamap lps list
+To add and browse LPs from a phone on the same trusted Wi-Fi network, run:
+
+```bash
+uv run mediamap lps web
+```
+
+Open `http://<this-computer's-local-IP>:8765` on the phone. The server listens
+on the local network without authentication, so use it only on a trusted
+network. The page can search MusicBrainz, add a selected release, list the LP
+catalogue, and rebuild the map.
 ```
 
 All collections also support `search QUERY` and `project-pending`. Books use
