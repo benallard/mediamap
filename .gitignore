@@ -1,6 +1,7 @@
 .env
 models/
 __pycache__/
+*.egg-info/
 *.sqlite3
 map_model.joblib
 *_map_model.joblib

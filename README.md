@@ -7,14 +7,12 @@ these collections.
 
 ## Setup
 
-Python 3.12+ is required. Install the dependencies and run the CLI from the
-project directory:
+Python 3.12+ is required. Install [uv](https://docs.astral.sh/uv/) if needed,
+then sync dependencies and run the CLI from the project directory:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m mediamap --help
+uv sync
+uv run mediamap --help
 ```
 
 Metadata lookups need an internet connection. On the first map operation,
@@ -29,23 +27,23 @@ commit it.
 Each collection has the same commands, but its own database and fitted map:
 
 ```bash
-python -m mediamap books add
-python -m mediamap cds add
-python -m mediamap lps add
+uv run mediamap books add
+uv run mediamap cds add
+uv run mediamap lps add
 ```
 
 For each collection, repeat `add` to build a varied set, then create its map
 and browse it locally:
 
 ```bash
-python -m mediamap books build-map
-python -m mediamap books list
-python -m mediamap books search "Kant"
+uv run mediamap books build-map
+uv run mediamap books list
+uv run mediamap books search "Kant"
 
-python -m mediamap cds build-map
-python -m mediamap cds list
-python -m mediamap lps build-map
-python -m mediamap lps list
+uv run mediamap cds build-map
+uv run mediamap cds list
+uv run mediamap lps build-map
+uv run mediamap lps list
 ```
 
 All collections also support `search QUERY` and `project-pending`. Books use
@@ -86,7 +84,7 @@ metadata merging does not guarantee edition matching.
 Run the offline test suite with:
 
 ```bash
-python -m unittest discover -s tests
+uv run python -m unittest discover -s tests
 ```
 
 GitHub Actions runs the unit tests and checks all four CLI help entry points on
