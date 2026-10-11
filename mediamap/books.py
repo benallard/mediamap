@@ -23,10 +23,10 @@ from typing import Any
 from urllib.parse import quote
 
 import requests
-from embedding import EMBEDDING_MODEL, load_embedder
-from metadata import USER_AGENT, lookup_metadata
+from .book_metadata import USER_AGENT, lookup_metadata
+from .embedding import EMBEDDING_MODEL, load_embedder
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent
 DB_PATH = HERE / "library.sqlite3"
 MODEL_PATH = HERE / "map_model.joblib"
 
@@ -271,7 +271,7 @@ def list_books(db: sqlite3.Connection) -> None:
     print(f"Total: {len(rows)}")
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Build a frozen multilingual semantic map of your books.")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("add", help="manually enter a title/author and select external metadata")
@@ -280,7 +280,7 @@ def main() -> None:
     s = sub.add_parser("search", help="search local title/author catalogue"); s.add_argument("query")
     sub.add_parser("list", help="list books sorted by semantic coordinates")
     sub.add_parser("project-pending", help="project saved but unmapped books into the frozen map")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     db = connect()
     try:
         if args.cmd == "add": add_book(db)

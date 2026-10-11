@@ -6,12 +6,13 @@ from typing import Any
 import requests
 from dotenv import load_dotenv
 
+ROOT = Path(__file__).resolve().parent.parent
 GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 OPEN_LIBRARY_SEARCH_URL = "https://openlibrary.org/search.json"
 TIMEOUT = 12
-load_dotenv(Path(__file__).resolve().with_name(".env"))
+load_dotenv(ROOT / ".env")
 CONTACT_EMAIL = os.environ.get("BOOKMAP_CONTACT_EMAIL", "").strip()
-USER_AGENT = "BookMapPersonalLibrary/0.2" + (
+USER_AGENT = "MediaMap/0.1" + (
     f" (contact: {CONTACT_EMAIL})" if CONTACT_EMAIL else " (personal, low-volume use)"
 )
 

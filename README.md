@@ -1,50 +1,93 @@
-# BookMap — semantic book shelving prototype
+# MediaMap
 
-A command-line prototype for manually cataloguing books, enriching them through Google Books (Open Library fallback), embedding descriptions/categories with a multilingual model, and placing books in a 2-D UMAP map.
+MediaMap keeps separate local collections for books, CDs, and LPs and arranges
+each collection by semantic similarity. Books are mapped in two dimensions;
+CDs and LPs each have their own one-dimensional map. Nothing is mixed across
+these collections.
 
-## Requirements
+## Setup
 
-Python 3.10+ recommended. The first embedding run downloads a multilingual sentence-transformer model and saves it under `models/`; later runs load that local copy without checking Hugging Face. Metadata lookup requires an internet connection. The program makes no OCR or image-based guesses.
+Python 3.12+ is required. Install the dependencies and run the CLI from the
+project directory:
 
 ```bash
 python -m venv .venv
-# macOS/Linux:
 source .venv/bin/activate
-# Windows PowerShell instead:
-# .venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-python library.py add
+python -m mediamap --help
 ```
 
-To use a Google Books API key, put `GOOGLE_BOOKS_API_KEY=your_key` in a
-project-root `.env` file. The app loads that file at startup; alternatively,
-export `GOOGLE_BOOKS_API_KEY` in the shell before running the app. Keep the key
-private and do not commit `.env`.
+Metadata lookups need an internet connection. On the first map operation,
+MediaMap downloads its sentence-transformer model from Hugging Face and saves
+it under `models/`; future runs use that local copy. To enable a Google Books
+API key, add `GOOGLE_BOOKS_API_KEY=your_key` to a project-root `.env` file.
+You can also export the key in your shell. Keep `.env` private and do not
+commit it.
 
-Repeat `python library.py add` for an initial representative batch. For a first trial, use at least 20–50 varied books if possible; UMAP with only a handful is unstable and not very informative. Then fit the initial map:
+## Separate collections
+
+Each collection has the same commands, but its own database and fitted map:
 
 ```bash
-python library.py build-map
-python library.py list
-python library.py search "Kant"
+python -m mediamap books add
+python -m mediamap cds add
+python -m mediamap lps add
 ```
 
-For books added later, use `python library.py add`; the saved UMAP model projects them into the existing map. If a book was saved but projection failed, use `python library.py project-pending`.
+For each collection, repeat `add` to build a varied set, then create its map
+and browse it locally:
 
-## Stability and limitations
+```bash
+python -m mediamap books build-map
+python -m mediamap books list
+python -m mediamap books search "Kant"
 
-- `library.sqlite3` stores catalogue metadata and assigned coordinates. `map_model.joblib` stores the fitted UMAP transform. Back up both files together.
-- **Do not run `build-map` again casually.** It refits UMAP and may move all existing books. The model is intentionally fixed between map rebuilds.
-- The embedding model is `paraphrase-multilingual-MiniLM-L12-v2`, suitable for German/English similarity experiments. Model upgrades are out of scope for this prototype.
-- The embedding weights are kept in the ignored local `models/` directory. Back it up if you want to avoid downloading the model again on another machine.
-- UMAP coordinates are relative, arbitrary axes, not literal shelf numbers. Nearby coordinates are a starting point for grouping books into shelf sections.
-- Cross-language equivalence and UMAP quality are not guaranteed. Sparse or missing summaries lead to weaker placement. Inspect the printed nearest neighbours and test on books you know well.
-- The metadata providers may return multiple editions. The app merges the best Google Books and Open Library matches into one result, but does **not** robustly merge different editions of the same work. Content similarity helps placement, but is not proof of duplicate identity.
-- Google Books and Open Library are queried for each lookup; results are merged, and an unavailable or rate-limited provider does not prevent using the other. HTTP 429 diagnostics include relevant response headers and the response body when provided. Open Library requests identify the app with a User-Agent; you can optionally set `BOOKMAP_CONTACT_EMAIL` to include a contact address as requested by Open Library.
-- This is a local prototype, not a polished mobile app. It has not been tested against a real collection yet.
+python -m mediamap cds build-map
+python -m mediamap cds list
+python -m mediamap lps build-map
+python -m mediamap lps list
+```
 
-## Suggested next improvements
+All collections also support `search QUERY` and `project-pending`. Books use
+Google Books and Open Library. CD and LP lookups use MusicBrainz; results are
+filtered to the requested format when MusicBrainz provides format information.
+Set `BOOKMAP_CONTACT_EMAIL` in `.env` or the shell to identify requests to
+Open Library and MusicBrainz.
 
-1. Add explicit ISBN/edition/work matching across providers.
-2. Export a CSV/HTML shelf map and allow shelf dimensions and capacity constraints.
-3. Add a review screen showing nearest semantic neighbours before physically shelving.
+## Storage and maps
+
+- `library.sqlite3` and `map_model.joblib` are the existing book catalogue and
+  2D map. Existing files are left in place.
+- `cds.sqlite3` and `cds_map_model.joblib` store the CD collection and its
+  independent 1D map.
+- `lps.sqlite3` and `lps_map_model.joblib` store the LP collection and its
+  independent 1D map.
+- The downloaded embedding model is stored in the ignored `models/` folder.
+  Back up these files together if you need to preserve the collections and
+  avoid downloading the model again on another machine.
+
+Fitting a map again moves its existing coordinates, so rebuild only when you
+intend to refit that collection. For each 1D map, the coordinate is a relative
+similarity position, not a physical shelf location. Books use UMAP's 2D
+coordinates. Sparse metadata makes placement less meaningful.
+
+## Limitations
+
+MusicBrainz may return multiple releases or incomplete format information;
+review the selected release, year, label, and format. The CD and LP maps use
+release title, artist, year, label, format, and track count as their semantic
+description, so albums with sparse metadata may be less precisely placed.
+At least three albums are required to fit a 1D music map.
+Book lookup may also return different editions of the same work; cross-source
+metadata merging does not guarantee edition matching.
+
+## Tests
+
+Run the offline test suite with:
+
+```bash
+python -m unittest discover -s tests
+```
+
+GitHub Actions runs the unit tests and checks all four CLI help entry points on
+pushes and pull requests.
