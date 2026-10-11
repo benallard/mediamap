@@ -23,12 +23,12 @@ from typing import Any
 from urllib.parse import quote
 
 import requests
+from embedding import EMBEDDING_MODEL, load_embedder
 from metadata import USER_AGENT, lookup_metadata
 
 HERE = Path(__file__).resolve().parent
 DB_PATH = HERE / "library.sqlite3"
 MODEL_PATH = HERE / "map_model.joblib"
-EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 
 def connect() -> sqlite3.Connection:
@@ -161,20 +161,6 @@ def choose_candidate(title: str, author: str) -> dict[str, Any] | None:
         if raw.isdigit() and 1 <= int(raw) <= len(candidates):
             return enrich_openlibrary(candidates[int(raw)-1])
         print("Please enter a number from the list.")
-
-
-def load_embedder():
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError:
-        print("Missing dependencies. Run: pip install -r requirements.txt", file=sys.stderr)
-        raise SystemExit(2)
-    return SentenceTransformer(EMBEDDING_MODEL)
-
-
-def encode_text(text: str):
-    model = load_embedder()
-    return model.encode([text], normalize_embeddings=True)[0]
 
 
 def add_book(db: sqlite3.Connection) -> None:

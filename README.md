@@ -4,7 +4,7 @@ A command-line prototype for manually cataloguing books, enriching them through 
 
 ## Requirements
 
-Python 3.10+ recommended. The first run downloads a multilingual sentence-transformer model and may take a while. Metadata lookup requires an internet connection. The program makes no OCR or image-based guesses.
+Python 3.10+ recommended. The first embedding run downloads a multilingual sentence-transformer model and saves it under `models/`; later runs load that local copy without checking Hugging Face. Metadata lookup requires an internet connection. The program makes no OCR or image-based guesses.
 
 ```bash
 python -m venv .venv
@@ -36,6 +36,7 @@ For books added later, use `python library.py add`; the saved UMAP model project
 - `library.sqlite3` stores catalogue metadata and assigned coordinates. `map_model.joblib` stores the fitted UMAP transform. Back up both files together.
 - **Do not run `build-map` again casually.** It refits UMAP and may move all existing books. The model is intentionally fixed between map rebuilds.
 - The embedding model is `paraphrase-multilingual-MiniLM-L12-v2`, suitable for German/English similarity experiments. Model upgrades are out of scope for this prototype.
+- The embedding weights are kept in the ignored local `models/` directory. Back it up if you want to avoid downloading the model again on another machine.
 - UMAP coordinates are relative, arbitrary axes, not literal shelf numbers. Nearby coordinates are a starting point for grouping books into shelf sections.
 - Cross-language equivalence and UMAP quality are not guaranteed. Sparse or missing summaries lead to weaker placement. Inspect the printed nearest neighbours and test on books you know well.
 - The metadata providers may return multiple editions. The app merges the best Google Books and Open Library matches into one result, but does **not** robustly merge different editions of the same work. Content similarity helps placement, but is not proof of duplicate identity.
