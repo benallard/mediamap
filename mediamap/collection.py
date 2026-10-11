@@ -15,7 +15,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from .embedding import EMBEDDING_MODEL, load_embedder
+from .embedding import EMBEDDING_MODEL, encode_texts
 from .reduction import fit_reducer, load_reducer, save_reducer
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -123,14 +123,6 @@ class Collection:
                 )
 
     # -- helpers ----------------------------------------------------------
-    def _embed(self, texts: list[str], progress: bool = False):
-        import numpy as np
-
-        model = load_embedder()
-        return np.asarray(model.encode(
-            texts, normalize_embeddings=True, show_progress_bar=progress,
-        ))
-
     def describe(self, row: sqlite3.Row) -> str:
         return f"{row['title']} — {row[self.spec.creators_col]} [{row['year']}]"
 
@@ -186,7 +178,7 @@ class Collection:
     def _project(self, item_id: int, text: str) -> None:
         spec = self.spec
         reducer = load_reducer(spec.model_path)
-        coords = [float(v) for v in reducer.transform(self._embed([text]))[0]]
+        coords = [float(v) for v in reducer.transform(encode_texts([text]))[0]]
         assignments = ", ".join(f"{c}=?" for c in spec.coord_cols)
         self.db.execute(
             f"UPDATE {spec.table} SET {assignments} WHERE id=?", (*coords, item_id),
@@ -216,7 +208,7 @@ class Collection:
 
         print(f"Embedding {len(rows)} {spec.label}s with {EMBEDDING_MODEL} …")
         texts = [spec.text_from_row(r) or r["semantic_text"] for r in rows]
-        vectors = self._embed(
+        vectors = encode_texts(
             [t or f"{spec.label} with no available description" for t in texts],
             progress=True,
         )

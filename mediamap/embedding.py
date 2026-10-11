@@ -32,5 +32,12 @@ def load_embedder() -> Any:
     return model
 
 
+def encode_texts(texts: list[str], progress: bool = False):
+    """Normalized embeddings for several texts, as an array of shape (len(texts), dim)."""
+    return load_embedder().encode(
+        texts, normalize_embeddings=True, show_progress_bar=progress
+    )
+
+
 def encode_text(text: str):
     return load_embedder().encode([text], normalize_embeddings=True)[0]
