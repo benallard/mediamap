@@ -81,8 +81,23 @@ class MediaSpec(ABC):
         """Columns identifying an already-catalogued item, or None to skip the check."""
         return None
 
+    def enrich(self, record: dict[str, Any]) -> None:
+        """Fetch extra metadata (in place) once the item is known not to be a duplicate."""
+
     def warn(self, record: dict[str, Any]) -> None:
         """Print warnings about a record before it is saved."""
+
+    def text_from_row(self, row: sqlite3.Row) -> str | None:
+        """Rebuild the embedded text from stored columns, so the recipe can change
+        without re-querying providers. None = keep the stored semantic_text."""
+        return None
+
+    supports_refresh: bool = False
+
+    def refresh_row(self, row: sqlite3.Row) -> dict[str, Any] | None:
+        """Fetch metadata missing from an existing row. Return column -> value
+        updates, or None/{} if there is nothing to do or the lookup failed."""
+        return None
 
 
 class Collection:
@@ -91,10 +106,20 @@ class Collection:
         self.db = sqlite3.connect(spec.db_path)
         self.db.row_factory = sqlite3.Row
         self.db.execute(spec.schema_sql())
+        self._add_missing_columns()
         self.db.commit()
 
     def close(self) -> None:
         self.db.close()
+
+    def _add_missing_columns(self) -> None:
+        """Databases created before a spec grew new columns get them added."""
+        existing = {r["name"] for r in self.db.execute(f"PRAGMA table_info({self.spec.table})")}
+        for name in self.spec.extra_columns:
+            if name not in existing:
+                self.db.execute(
+                    f"ALTER TABLE {self.spec.table} ADD COLUMN {name} TEXT NOT NULL DEFAULT ''"
+                )
 
     # -- helpers ----------------------------------------------------------
     def _embed(self, texts: list[str], progress: bool = False):
@@ -135,6 +160,7 @@ class Collection:
             print(f"  Position: {self.position(old)}")
             return
 
+        spec.enrich(record)
         spec.warn(record)
         text = spec.semantic_text(record)
         values = {**spec.to_row(record), "semantic_text": text}
@@ -187,17 +213,16 @@ class Collection:
         import umap
 
         spec = self.spec
-        rows = self.db.execute(
-            f"SELECT id, semantic_text FROM {spec.table} ORDER BY id"
-        ).fetchall()
+        rows = self.db.execute(f"SELECT * FROM {spec.table} ORDER BY id").fetchall()
         if len(rows) < spec.min_items:
             print(f"Add at least {spec.min_items} {spec.label}s before fitting the map "
                   f"(currently {len(rows)}). 20+ varied items is preferable.")
             return
 
         print(f"Embedding {len(rows)} {spec.label}s with {EMBEDDING_MODEL} …")
+        texts = [spec.text_from_row(r) or r["semantic_text"] for r in rows]
         vectors = self._embed(
-            [r["semantic_text"] or f"{spec.label} with no available description" for r in rows],
+            [t or f"{spec.label} with no available description" for t in texts],
             progress=True,
         )
         reducer = umap.UMAP(
@@ -212,9 +237,9 @@ class Collection:
         joblib.dump(reducer, spec.model_path)
         assignments = ", ".join(f"{c}=?" for c in spec.coord_cols)
         self.db.executemany(
-            f"UPDATE {spec.table} SET {assignments} WHERE id=?",
-            [(*(float(v) for v in point), row["id"])
-             for row, point in zip(rows, coords, strict=True)],
+            f"UPDATE {spec.table} SET {assignments}, semantic_text=? WHERE id=?",
+            [(*(float(v) for v in point), text, row["id"])
+             for row, point, text in zip(rows, coords, texts, strict=True)],
         )
         self.db.commit()
         print(f"Saved the frozen {spec.dims}-D map to {spec.model_path.name}; "
@@ -232,6 +257,38 @@ class Collection:
         ).fetchall()
         for row in rows:
             self._project(row["id"], row["semantic_text"])
+
+    def refresh(self) -> None:
+        """Backfill metadata for existing rows (e.g. after a spec gained columns)."""
+        spec = self.spec
+        if not spec.supports_refresh:
+            print(f"`refresh` is not supported for {spec.label}s.")
+            return
+        rows = self.db.execute(f"SELECT * FROM {spec.table} ORDER BY id").fetchall()
+        done = 0
+        for row in rows:
+            updates = spec.refresh_row(row)
+            if not updates:
+                continue
+            assignments = ", ".join(f"{c}=?" for c in updates)
+            self.db.execute(
+                f"UPDATE {spec.table} SET {assignments} WHERE id=?",
+                (*updates.values(), row["id"]),
+            )
+            fresh = self.db.execute(
+                f"SELECT * FROM {spec.table} WHERE id=?", (row["id"],)
+            ).fetchone()
+            text = spec.text_from_row(fresh)
+            if text is not None:
+                self.db.execute(
+                    f"UPDATE {spec.table} SET semantic_text=? WHERE id=?", (text, row["id"])
+                )
+            self.db.commit()  # per row, so an interrupted run keeps its progress
+            done += 1
+            print(f"  refreshed {self.describe(fresh)}")
+        print(f"Refreshed {done} of {len(rows)} {spec.label}s.")
+        if done:
+            print("Texts changed: run `build-map` to refit the map (this refits all coordinates).")
 
     def list_all(self) -> None:
         cols = self.spec.coord_cols
@@ -269,6 +326,7 @@ def run_cli(spec: MediaSpec, argv: list[str] | None = None) -> None:
     search.add_argument("query")
     sub.add_parser("list", help="list items sorted by map position")
     sub.add_parser("project-pending", help="project saved but unmapped items into the frozen map")
+    sub.add_parser("refresh", help="fetch metadata that existing items are missing")
     args = parser.parse_args(argv)
 
     collection = Collection(spec)
@@ -279,6 +337,7 @@ def run_cli(spec: MediaSpec, argv: list[str] | None = None) -> None:
             "search": lambda: collection.search(args.query),
             "list": collection.list_all,
             "project-pending": collection.project_pending,
+            "refresh": collection.refresh,
         }
         actions[args.cmd]()
     finally:
