@@ -208,10 +208,16 @@ class MediaCatalogueTests(unittest.TestCase):
         self.insert_albums(col, 3)
         col.build_map(neighbors=2)
 
-        self.add_record(col, album_record(source_id="rel-new"))
+        with patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.add_record(col, album_record(source_id="rel-new"))
 
         row = col.db.execute("SELECT x FROM albums WHERE source_id='rel-new'").fetchone()
         self.assertEqual(row["x"], 0.25)  # what FakeReducer.transform returns
+        self.assertIn(
+            "Suggested slot for this release: between Album 0 — Band [1975] "
+            "and Album 1 — Band [1975].",
+            output.getvalue(),
+        )
 
     @patch("mediamap.music._mb_get")
     def test_refresh_backfills_missing_genres_once(self, mb_get):

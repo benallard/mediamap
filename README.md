@@ -49,6 +49,8 @@ uv run mediamap lps list
 All collections also support `search QUERY` and `project-pending`. Books use
 Google Books and Open Library. CD and LP lookups use MusicBrainz; results are
 filtered to the requested format when MusicBrainz provides format information.
+When a CD or LP is projected into an existing map, `add` reports its suggested
+slot between adjacent releases (or before/after an endpoint release).
 Set `BOOKMAP_CONTACT_EMAIL` in `.env` or the shell to identify requests to
 Open Library and MusicBrainz.
 

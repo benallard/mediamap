@@ -187,6 +187,27 @@ class Collection:
         shown = ", ".join(f"{c}={v:.3f}" for c, v in zip(spec.coord_cols, coords))
         print(f"Projected into the frozen map: {shown}")
 
+        if spec.dims == 1:
+            rows = self.db.execute(
+                f"SELECT * FROM {spec.table} WHERE {spec.coord_cols[0]} IS NOT NULL "
+                f"ORDER BY {spec.coord_cols[0]}, title, id"
+            ).fetchall()
+            index = next(i for i, row in enumerate(rows) if row["id"] == item_id)
+            previous = rows[index - 1] if index > 0 else None
+            following = rows[index + 1] if index + 1 < len(rows) else None
+            if previous and following:
+                print(
+                    f"Suggested slot for this release: between "
+                    f"{self.describe(previous)} and {self.describe(following)}."
+                )
+            elif previous:
+                print(f"Suggested slot for this release: after {self.describe(previous)}.")
+            elif following:
+                print(f"Suggested slot for this release: before {self.describe(following)}.")
+            else:
+                print("No other mapped releases yet; this is the first placement.")
+            return
+
         mapped = self.db.execute(
             f"SELECT * FROM {spec.table} WHERE id<>? AND "
             + " AND ".join(f"{c} IS NOT NULL" for c in spec.coord_cols),
