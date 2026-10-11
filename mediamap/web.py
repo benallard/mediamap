@@ -8,7 +8,7 @@ from typing import Any, Iterator
 from urllib.parse import urlparse
 
 from .collection import Collection, MediaSpec
-from .music import fetch_genres, search_releases
+from .music import MusicBrainzError, fetch_genres, search_releases
 
 _build_lock = threading.Lock()
 _build_status: dict[str, Any] = {"running": False, "message": ""}
@@ -45,6 +45,13 @@ PAGE = """<!doctype html>
     .details { margin-top: 3px; color: var(--muted); font-size: 13px; }
     .pick { flex: 0 0 auto; padding: 8px 11px; border: 1px solid var(--accent); background: transparent; color: var(--accent); }
     .position { flex: 0 0 auto; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+    .record.just-added { animation: added-flash 1.8s ease-out both; }
+    @keyframes added-flash { from { background: #e1e7d8; } to { background: transparent; } }
+    .busy-overlay { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; background: rgb(36 39 33 / 34%); }
+    .busy-overlay[hidden] { display: none; }
+    .busy-message { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-radius: 3px; background: var(--paper); box-shadow: 0 8px 30px rgb(0 0 0 / 15%); font-weight: 600; }
+    .spinner { width: 18px; height: 18px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
     .empty { padding: 18px 0; color: var(--muted); }
     @media (max-width: 560px) {
       main { width: min(100% - 24px, 760px); padding-top: 20px; }
@@ -80,12 +87,22 @@ PAGE = """<!doctype html>
   </section>
   <p class="status" id="build-status" aria-live="polite"></p>
 </main>
+<div class="busy-overlay" id="busy-overlay" hidden>
+    <div class="busy-message" role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span id="busy-message">Adding record…</span></div>
+</div>
 <script>
 const $ = (id) => document.getElementById(id);
 const recordsNode = $('records');
 const resultsNode = $('results');
 const setStatus = (id, message) => { $(id).textContent = message; };
 const details = (record) => [record.year, record.release_format, record.country].filter(Boolean).join(' · ');
+
+function setBusy(busy, message = 'Adding record…') {
+    $('busy-overlay').hidden = !busy;
+    $('busy-message').textContent = message;
+    document.querySelector('main').inert = busy;
+    document.querySelector('main').setAttribute('aria-busy', String(busy));
+}
 
 async function loadRecords() {
   const response = await fetch('/api/albums');
@@ -99,6 +116,8 @@ async function loadRecords() {
   }
   for (const record of data) {
     const row = document.createElement('div'); row.className = 'record';
+        row.dataset.recordId = record.id;
+        row.tabIndex = -1;
     const info = document.createElement('div');
     const name = document.createElement('div'); name.className = 'name'; name.textContent = record.title;
     const sub = document.createElement('div'); sub.className = 'details';
@@ -134,15 +153,39 @@ $('search-form').addEventListener('submit', async (event) => {
 
 async function addRecord(record, button) {
   button.disabled = true;
+    setBusy(true);
   try {
     const genres = $('genres').value.split(',').map((genre) => genre.trim()).filter(Boolean);
     const response = await fetch('/api/albums', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({record, genres})});
     const data = await response.json();
     if (!response.ok && !data.duplicate) throw new Error(data.error || 'Could not add record.');
-    setStatus('search-status', data.duplicate ? 'That release is already in your catalogue.' : 'Record added.');
     await loadRecords();
-  } catch (error) { setStatus('search-status', error.message); }
-  finally { button.disabled = false; }
+        if (data.duplicate) {
+            setStatus('search-status', 'That release is already in your catalogue.');
+            return;
+        }
+
+        $('title').value = '';
+        $('artist').value = '';
+        $('genres').value = '';
+        resultsNode.replaceChildren();
+
+        const addedRow = document.querySelector(`[data-record-id="${data.id}"]`);
+        if (addedRow) {
+            addedRow.classList.add('just-added');
+            const position = addedRow.querySelector('.position').textContent;
+            setStatus('search-status', position === 'not mapped'
+                ? `Added “${record.title}”; it is not mapped yet.`
+                : `Added “${record.title}” at map position ${position}.`);
+            requestAnimationFrame(() => {
+                addedRow.focus({preventScroll: true});
+                addedRow.scrollIntoView({behavior: 'smooth', block: 'center'});
+            });
+        } else {
+            setStatus('search-status', `Added “${record.title}”.`);
+        }
+    } catch (error) { setStatus('search-status', error.message); }
+    finally { button.disabled = false; setBusy(false); }
 }
 
 async function checkBuild() {
@@ -268,7 +311,12 @@ class MediaMapHandler(BaseHTTPRequestHandler):
             if not isinstance(title, str) or not title.strip() or not isinstance(artist, str):
                 self._send_json(400, {"error": "Enter an album title and a valid artist."})
                 return
-            self._send_json(200, search_releases(title.strip()[:200], artist.strip()[:200]))
+            try:
+                releases = search_releases(title.strip()[:200], artist.strip()[:200])
+            except MusicBrainzError as exc:
+                self._send_json(502, {"error": str(exc)})
+                return
+            self._send_json(200, releases)
             return
 
         if path == "/api/albums":

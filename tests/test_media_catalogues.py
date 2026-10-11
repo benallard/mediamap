@@ -154,6 +154,43 @@ class MediaCatalogueTests(unittest.TestCase):
         self.assertEqual([record["source_id"] for record in records], ["unknown-release"])
 
     @patch("mediamap.music.requests.get")
+    def test_release_search_reports_musicbrainz_http_errors(self, get):
+        response = Mock()
+        response.status_code = 503
+        response.raise_for_status.side_effect = requests.HTTPError("503 Server Error")
+        get.return_value = response
+
+        with self.assertRaisesRegex(music.MusicBrainzError, "temporarily unavailable"):
+            music.search_releases("Album", "Artist")
+
+    def test_web_search_returns_gateway_error_when_musicbrainz_is_unavailable(self):
+        handler = type(
+            "TestLPHandler", (web.MediaMapHandler,),
+            {"spec": music.MusicSpec("lps"), "log_message": lambda *args: None},
+        )
+        server = web.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        connection = HTTPConnection("127.0.0.1", server.server_port)
+        try:
+            with patch.object(
+                web, "search_releases",
+                side_effect=music.MusicBrainzError("MusicBrainz is temporarily unavailable."),
+            ):
+                connection.request(
+                    "POST", "/api/search", body=json.dumps({"title": "Album", "artist": "Artist"}),
+                    headers={"Content-Type": "application/json"},
+                )
+                response = connection.getresponse()
+                self.assertEqual(response.status, 502)
+                self.assertIn("temporarily unavailable", json.loads(response.read())["error"])
+        finally:
+            connection.close()
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+    @patch("mediamap.music.requests.get")
     def test_search_results_carry_the_ids_needed_for_genre_lookup(self, get):
         release = self._release("cd-release", "CD", "CD release")
         release["release-group"] = {"id": "rg-1"}

@@ -25,6 +25,10 @@ USER_AGENT = "MediaMap/0.1" + (
 MEDIA_NAMES = {"cds": "CD", "lps": "LP"}
 
 
+class MusicBrainzError(RuntimeError):
+    """A MusicBrainz lookup failed or returned an invalid response."""
+
+
 def _release_formats(release: dict[str, Any]) -> list[str]:
     return [
         str(medium.get("format") or "").strip()
@@ -59,10 +63,10 @@ def _mb_get(url: str, params: dict[str, Any]) -> Any:
             timeout=TIMEOUT,
         )
         response.raise_for_status()
-        return response.json()
-    except requests.HTTPError as exc:
-        print(f"MusicBrainz API error: {exc}", file=sys.stderr)
-        print(exc.response.json(), file=sys.stderr)
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("MusicBrainz returned an invalid JSON document.")
+        return payload
     finally:
         _last_request = time.monotonic()
 
@@ -122,10 +126,14 @@ def search_releases(title: str, artist: str) -> list[dict[str, Any]]:
         payload = _mb_get(MUSICBRAINZ_URL, {"query": query, "limit": 25})
     except requests.RequestException as exc:
         print(f"MusicBrainz lookup failed: {exc}", file=sys.stderr)
-        return []
+        raise MusicBrainzError(
+            "MusicBrainz is temporarily unavailable. Please try again shortly."
+        ) from exc
     except ValueError as exc:
         print(f"Could not parse MusicBrainz response: {exc}", file=sys.stderr)
-        return []
+        raise MusicBrainzError(
+            "MusicBrainz returned an invalid response. Please try again shortly."
+        ) from exc
 
     releases = payload.get("releases", [])
     if not isinstance(releases, list):
@@ -165,7 +173,11 @@ def search_releases(title: str, artist: str) -> list[dict[str, Any]]:
 
 
 def choose_album(media_type: str, title: str, artist: str) -> dict[str, Any] | None:
-    records = search_releases(title, artist)
+    try:
+        records = search_releases(title, artist)
+    except MusicBrainzError as exc:
+        print(exc)
+        return None
     if not records:
         print(f"No {MEDIA_NAMES[media_type]} release matched in MusicBrainz.")
         print("Try a different title or artist; no album has been saved.")
