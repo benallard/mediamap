@@ -16,6 +16,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from .embedding import EMBEDDING_MODEL, load_embedder
+from .reduction import fit_reducer, load_reducer, save_reducer
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")  # providers read os.environ, so load this early
@@ -183,10 +184,8 @@ class Collection:
             print("Saved without coordinates. Run `project-pending` after resolving the issue.")
 
     def _project(self, item_id: int, text: str) -> None:
-        import joblib
-
         spec = self.spec
-        reducer = joblib.load(spec.model_path)
+        reducer = load_reducer(spec.model_path)
         coords = [float(v) for v in reducer.transform(self._embed([text]))[0]]
         assignments = ", ".join(f"{c}=?" for c in spec.coord_cols)
         self.db.execute(
@@ -208,10 +207,6 @@ class Collection:
                 print(f"  • {self.position(row)} | {self.describe(row)}")
 
     def build_map(self, neighbors: int) -> None:
-        import joblib
-        import numpy as np
-        import umap
-
         spec = self.spec
         rows = self.db.execute(f"SELECT * FROM {spec.table} ORDER BY id").fetchall()
         if len(rows) < spec.min_items:
@@ -225,16 +220,8 @@ class Collection:
             [t or f"{spec.label} with no available description" for t in texts],
             progress=True,
         )
-        reducer = umap.UMAP(
-            n_components=spec.dims,
-            n_neighbors=max(2, min(neighbors, len(rows) - 1)),
-            min_dist=0.15,
-            metric="cosine",
-            random_state=42,
-            transform_seed=42,
-        )
-        coords = np.asarray(reducer.fit_transform(vectors)).reshape(len(rows), spec.dims)
-        joblib.dump(reducer, spec.model_path)
+        reducer, coords = fit_reducer(vectors, spec.dims, neighbors)
+        save_reducer(reducer, spec.model_path)
         assignments = ", ".join(f"{c}=?" for c in spec.coord_cols)
         self.db.executemany(
             f"UPDATE {spec.table} SET {assignments}, semantic_text=? WHERE id=?",
