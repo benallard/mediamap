@@ -38,6 +38,6 @@ def main(argv: list[str] | None = None) -> None:
         parser.print_help()
         return
     if args.cmd == "web":
-        serve(COLLECTIONS[args.collection], args.host, args.port)
+        serve(COLLECTIONS[args.collection], args.host, args.port, args.cert, args.key)
         return
     run_command(COLLECTIONS[args.collection], args)

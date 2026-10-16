@@ -46,17 +46,35 @@ uv run mediamap cds build-map
 uv run mediamap cds list
 uv run mediamap lps build-map
 uv run mediamap lps list
-To add and browse LPs from a phone on the same trusted Wi-Fi network, run:
+```
+
+To add books or browse LPs from a phone on the same trusted Wi-Fi network, serve
+the web interface over HTTPS. Camera access requires a certificate the phone
+trusts. Install [mkcert](https://github.com/FiloSottile/mkcert), install its
+local CA on both the computer and phone, then create a certificate containing
+the computer's `.local` name and LAN IP:
 
 ```bash
-uv run mediamap lps web
+mkcert -install
+mkcert -cert-file mediamap-web-cert.pem -key-file mediamap-web-key.pem \
+  "$(scutil --get LocalHostName).local" localhost 127.0.0.1 <computer-LAN-IP>
+uv run mediamap books web --cert mediamap-web-cert.pem --key mediamap-web-key.pem
 ```
 
-Open `http://<this-computer's-local-IP>:8765` on the phone. The server listens
-on the local network without authentication, so use it only on a trusted
-network. The page can search MusicBrainz, add a selected release, list the LP
-catalogue, and rebuild the map.
-```
+Replace `<computer-LAN-IP>` with the computer's Wi-Fi IP address. For iOS,
+install the mkcert root certificate as a profile and enable full trust for it
+in Certificate Trust Settings; Android also requires trusting the local
+CA. Find it with `mkcert -CAROOT` (the `rootCA.pem` file) and consult the
+platform's certificate-install instructions. Then open
+`https://<computer-LAN-IP>:8765` on the phone. Keep the private key and root CA
+private. The server listens on the local network without authentication, so use
+it only on a trusted network. The books page scans EAN-13 ISBN barcodes in the
+browser, supports manual ISBN/title lookup, and asks you to confirm the edition
+before saving. Only the ISBN or search text is sent to the metadata providers;
+camera frames stay in the browser. The scanner library is loaded from unpkg.
+For LPs, run the same command with `lps web` instead; it supports MusicBrainz
+search, adding a selected release, listing the LP catalogue, and rebuilding
+the map.
 
 All collections also support `search QUERY` and `project-pending`. Books use
 Google Books and Open Library. CD and LP identification uses MusicBrainz;

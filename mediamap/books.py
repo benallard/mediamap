@@ -16,6 +16,22 @@ from .book_metadata import USER_AGENT, lookup_metadata
 from .collection import MediaSpec
 
 
+def normalize_isbn(value: str) -> str:
+    """Normalize and validate an ISBN-10 or ISBN-13 identifier."""
+    isbn = re.sub(r"[\s-]", "", value).upper()
+    if len(isbn) == 10 and isbn[:9].isdigit() and (isbn[-1].isdigit() or isbn[-1] == "X"):
+        checksum = sum((10 - index) * (10 if char == "X" else int(char))
+                       for index, char in enumerate(isbn))
+        if checksum % 11 == 0:
+            return isbn
+    if len(isbn) == 13 and isbn.isdigit() and isbn.startswith(("978", "979")):
+        checksum = sum(int(char) * (1 if index % 2 == 0 else 3)
+                       for index, char in enumerate(isbn))
+        if checksum % 10 == 0:
+            return isbn
+    raise ValueError("Enter a valid ISBN-10 or ISBN-13.")
+
+
 def get_json(url: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Fetch JSON. Return None on failure so another metadata provider can be tried."""
     try:

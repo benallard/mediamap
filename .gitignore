@@ -5,3 +5,5 @@ __pycache__/
 *.sqlite3
 map_model.joblib
 *_map_model.joblib
+mediamap-web-cert.pem
+mediamap-web-key.pem

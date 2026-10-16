@@ -332,10 +332,13 @@ def add_commands(parser: argparse.ArgumentParser, spec: MediaSpec) -> None:
     sub.add_parser("list", help="list items sorted by map position")
     sub.add_parser("project-pending", help="project saved but unmapped items into the frozen map")
     sub.add_parser("refresh", help="fetch metadata that existing items are missing")
-    if getattr(spec, "media_type", None) == "lps":
-        web = sub.add_parser("web", help="open a mobile-friendly LP catalogue")
+    if getattr(spec, "media_type", None) == "lps" or spec.table == "books":
+        medium = "LP" if getattr(spec, "media_type", None) == "lps" else "book"
+        web = sub.add_parser("web", help=f"open a mobile-friendly {medium} catalogue over HTTPS")
         web.add_argument("--host", default="0.0.0.0", help="interface to listen on")
-        web.add_argument("--port", type=int, default=8765, help="web interface port")
+        web.add_argument("--port", type=int, default=8765, help="HTTPS port")
+        web.add_argument("--cert", required=True, help="TLS certificate file (must be trusted by the phone)")
+        web.add_argument("--key", required=True, help="TLS private key file")
 
 
 def run_command(spec: MediaSpec, args: argparse.Namespace) -> None:
