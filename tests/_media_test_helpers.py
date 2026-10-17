@@ -11,6 +11,7 @@ from unittest.mock import patch, Mock
 import numpy as np
 
 from mediamap import collection, music, reduction
+from mediamap.metadata.providers import musicbrainz
 
 
 class FakeReducer:
@@ -69,7 +70,10 @@ class MediaTestCase(unittest.TestCase):
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
         self.root = Path(temp_dir.name)
-        for target, name, value in [(collection, "ROOT", self.root), (music, "MIN_INTERVAL", 0)]:
+        for target, name, value in [
+            (collection, "ROOT", self.root),
+            (musicbrainz, "MIN_INTERVAL", 0),
+        ]:
             patcher = patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)

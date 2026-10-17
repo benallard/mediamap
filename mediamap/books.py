@@ -7,13 +7,105 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from typing import Any
 
 import requests
 
-from .book_metadata import USER_AGENT, lookup_metadata
 from .collection import MediaSpec
+from .metadata.base import MetadataProvider, MetadataQuery
+from .metadata.providers.googlebooks import GoogleBooksProvider
+from .metadata.providers.openlibrary import OpenLibraryProvider
+
+GOOGLE_BOOKS_PROVIDER = GoogleBooksProvider()
+OPEN_LIBRARY_PROVIDER = OpenLibraryProvider()
+BOOK_PROVIDERS: tuple[MetadataProvider[dict[str, Any]], ...] = (
+    GOOGLE_BOOKS_PROVIDER,
+    OPEN_LIBRARY_PROVIDER,
+)
+
+
+def enrich_openlibrary(book: dict[str, Any]) -> dict[str, Any]:
+    """Add work-level description and subjects when Open Library has them."""
+    key = book.get("source_id", "")
+    if book.get("source") != "openlibrary" or not key.startswith("/works/"):
+        return book
+    data = OPEN_LIBRARY_PROVIDER.get_work(key)
+    if data:
+        description = data.get("description", "")
+        if isinstance(description, dict):
+            description = description.get("value", "")
+        book["description"] = str(description or "")
+        if data.get("subjects"):
+            book["subjects"] = list(
+                dict.fromkeys((book.get("subjects") or []) + data["subjects"])
+            )[:40]
+    return book
+
+
+def lookup_metadata(
+    isbn: str | None = None,
+    title: str | None = None,
+    author: str | None = None,
+) -> dict[str, Any]:
+    """Merge book metadata from configured providers, tolerating provider failures."""
+    if not isbn and not title:
+        raise ValueError("Provide at least an ISBN or a title.")
+
+    records: list[dict[str, Any]] = []
+    query = MetadataQuery(title=title, creator=author, identifier=isbn)
+    for provider in BOOK_PROVIDERS:
+        try:
+            provider_records = provider.search(query)
+            if provider_records:
+                records.extend(provider_records)
+        except requests.HTTPError as exc:
+            if exc.response is None or exc.response.status_code != 429:
+                print(f"Metadata provider unavailable ({provider.name}): {exc}")
+        except requests.RequestException as exc:
+            print(f"Metadata provider unavailable ({provider.name}): {exc}")
+        except (ValueError, KeyError, TypeError) as exc:
+            print(f"Could not parse {provider.name} response: {exc}")
+
+    if not records:
+        return {
+            "title": title,
+            "authors": [author] if author else [],
+            "description": None,
+            "subjects": [],
+            "publisher": None,
+            "published_date": None,
+            "language": None,
+            "isbn_10": None,
+            "isbn_13": isbn if isbn and len(isbn) == 13 else None,
+            "sources": [],
+        }
+
+    richest = max(records, key=lambda record: len(record.get("description") or ""))
+    merged = dict(richest)
+    for field in (
+        "title", "authors", "publisher", "published_date",
+        "language", "isbn_10", "isbn_13",
+    ):
+        if not merged.get(field):
+            merged[field] = next(
+                (record.get(field) for record in records if record.get(field)), None
+            )
+
+    merged["subjects"] = list(dict.fromkeys(
+        subject
+        for record in records
+        for subject in record.get("subjects", [])
+        if subject
+    ))
+    merged["sources"] = [record["source"] for record in records]
+    merged["source_ids"] = {
+        record["source"]: record["source_id"]
+        for record in records
+        if record.get("source_id")
+    }
+    merged.pop("source", None)
+    merged.pop("source_id", None)
+    return merged
 
 
 def normalize_isbn(value: str) -> str:
@@ -30,53 +122,6 @@ def normalize_isbn(value: str) -> str:
         if checksum % 10 == 0:
             return isbn
     raise ValueError("Enter a valid ISBN-10 or ISBN-13.")
-
-
-def get_json(url: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    """Fetch JSON. Return None on failure so another metadata provider can be tried."""
-    try:
-        r = requests.get(url, params=params, timeout=15, headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json",
-        })
-        if r.status_code == 429:
-            relevant_headers = {
-                name: value
-                for name, value in r.headers.items()
-                if name.lower() in {"date", "content-type", "retry-after", "www-authenticate", "server"}
-                   or any(term in name.lower() for term in ("rate", "quota"))
-                   or name.lower().startswith(("x-goog-", "x-google-"))
-            }
-            header_details = ", ".join(
-                f"{name}: {value}" for name, value in sorted(relevant_headers.items())
-            )
-            suffix = f" Relevant headers: {header_details}." if header_details else ""
-            body = r.text.strip()
-            body_suffix = f" Response body: {body[:2000]}" if body else ""
-            if len(body) > 2000:
-                body_suffix += "…"
-            print(f"Metadata provider rate-limited this request (HTTP 429): {url}.{suffix}{body_suffix}", file=sys.stderr)
-            return None  # Do not hammer the provider; caller can try the next source.
-        r.raise_for_status()
-        return r.json()
-    except (requests.RequestException, ValueError) as e:
-        print(f"Metadata lookup failed for {url}: {e}", file=sys.stderr)
-        return None
-
-
-def enrich_openlibrary(book: dict[str, Any]) -> dict[str, Any]:
-    """Try to obtain a work description from Open Library when available."""
-    key = book.get("source_id", "")
-    if book.get("source") != "openlibrary" or not key.startswith("/works/"):
-        return book
-    data = get_json("https://openlibrary.org" + key + ".json")
-    if data:
-        desc = data.get("description", "")
-        if isinstance(desc, dict): desc = desc.get("value", "")
-        book["description"] = str(desc or "")
-        if data.get("subjects"):
-            book["subjects"] = list(dict.fromkeys((book.get("subjects") or []) + data["subjects"]))[:40]
-    return book
 
 
 def make_semantic_text(b: dict[str, Any]) -> str:

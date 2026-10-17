@@ -2,95 +2,30 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
-import sys
 from typing import Any
 
-import requests
-
 from .collection import MediaSpec
+from .metadata.base import MetadataQuery
+from .metadata.providers.tmdb import FilmMetadataError, TMDbProvider
 
-TMDB_API = "https://api.themoviedb.org/3"
-TIMEOUT = 15
+__all__ = [
+    "FilmMetadataError",
+    "FilmSpec",
+    "get_movie_details",
+    "search_movies",
+]
+
 FORMATS = ("DVD", "Blu-ray")
-
-
-class FilmMetadataError(RuntimeError):
-    """A TMDb lookup failed or returned an invalid response."""
-
-
-def _tmdb_get(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    api_key = os.environ.get("MEDIAMAP_TMDB_API_KEY", "").strip()
-    if not api_key:
-        raise FilmMetadataError(
-            "Set MEDIAMAP_TMDB_API_KEY to a TMDb API key before looking up films."
-        )
-    try:
-        response = requests.get(
-            f"{TMDB_API}{path}",
-            params={"api_key": api_key, **(params or {})},
-            headers={"Accept": "application/json"},
-            timeout=TIMEOUT,
-        )
-        response.raise_for_status()
-        payload = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        print(f"TMDb lookup failed ({type(exc).__name__}).", file=sys.stderr)
-        raise FilmMetadataError(
-            "TMDb is unavailable or returned invalid data. Please try again shortly."
-        ) from exc
-    if not isinstance(payload, dict):
-        raise FilmMetadataError("TMDb returned an invalid response.")
-    return payload
+TMDB_PROVIDER = TMDbProvider()
 
 
 def search_movies(query: str) -> list[dict[str, Any]]:
-    """Find TMDb movie matches by title."""
-    payload = _tmdb_get("/search/movie", {"query": query, "include_adult": "false"})
-    results = payload.get("results", [])
-    if not isinstance(results, list):
-        raise FilmMetadataError("TMDb returned an invalid movie result list.")
-    movies = []
-    for movie in results[:20]:
-        if not isinstance(movie, dict) or not movie.get("id") or not movie.get("title"):
-            continue
-        movies.append({
-            "source_id": str(movie["id"]),
-            "title": str(movie["title"]),
-            "year": str(movie.get("release_date") or "")[:4],
-            "overview": str(movie.get("overview") or ""),
-        })
-    return movies
+    return TMDB_PROVIDER.search(MetadataQuery(title=query))
 
 
 def get_movie_details(source_id: str) -> dict[str, Any]:
-    """Fetch descriptive metadata and director/cast for a selected TMDb movie."""
-    data = _tmdb_get(f"/movie/{source_id}", {"append_to_response": "credits"})
-    credits_data = data.get("credits") or {}
-    crew = credits_data.get("crew", []) if isinstance(credits_data, dict) else []
-    cast = credits_data.get("cast", []) if isinstance(credits_data, dict) else []
-    directors = [
-        str(person["name"]) for person in crew
-        if isinstance(person, dict) and person.get("job") == "Director" and person.get("name")
-    ]
-    actors = [
-        str(person["name"]) for person in cast
-        if isinstance(person, dict) and person.get("name")
-    ][:8]
-    genres = data.get("genres", [])
-    return {
-        "source_id": str(data.get("id") or source_id),
-        "title": str(data.get("title") or ""),
-        "year": str(data.get("release_date") or "")[:4],
-        "overview": str(data.get("overview") or ""),
-        "genres": [
-            str(genre["name"]) for genre in genres
-            if isinstance(genre, dict) and genre.get("name")
-        ] if isinstance(genres, list) else [],
-        "directors": directors,
-        "cast": actors,
-    }
+    return TMDB_PROVIDER.get_movie_details(source_id)
 
 
 def _decode_list(value: str) -> list[str]:

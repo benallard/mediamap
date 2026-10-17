@@ -1,83 +1,44 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
-import time
 from typing import Any
 
 import requests
 
 from .collection import MediaSpec  # imported first: loads .env
+from .metadata.base import MetadataQuery
+from .metadata.providers.lastfm import LastFmProvider
+from .metadata.providers.musicbrainz import MusicBrainzProvider
 
 MUSICBRAINZ_API = "https://musicbrainz.org/ws/2/"
 MUSICBRAINZ_URL = MUSICBRAINZ_API + "release/"
-LASTFM_API_URL = "https://ws.audioscrobbler.com/2.0/"
-TIMEOUT = 15
-MIN_INTERVAL = 1.1  # MusicBrainz allows about one request per second
 MAX_GENRES = 8
-MAX_TAGS = 8
 MIN_GENRES = 3  # fewer release-group genres than this: top up from the artist
 VARIOUS_ARTISTS = "Various Artists"
-USER_AGENT = "MediaMap/0.1" + (
-    f" (contact: {os.environ['MEDIAMAP_CONTACT_EMAIL'].strip()})"
-    if os.environ.get("MEDIAMAP_CONTACT_EMAIL", "").strip()
-    else " (personal collection)"
-)
 MEDIA_NAMES = {"cds": "CD", "lps": "LP"}
+MUSICBRAINZ_PROVIDER = MusicBrainzProvider()
+LASTFM_PROVIDER = LastFmProvider()
 
 
 class MusicBrainzError(RuntimeError):
     """A MusicBrainz lookup failed or returned an invalid response."""
 
 
-def _release_formats(release: dict[str, Any]) -> list[str]:
-    return [
-        str(medium.get("format") or "").strip()
-        for medium in release.get("media", [])
-        if medium.get("format")
-    ]
-
-
-def _artist_names(release: dict[str, Any]) -> list[str]:
-    names = []
-    for credit in release.get("artist-credit", []):
-        if isinstance(credit, dict) and credit.get("name"):
-            names.append(str(credit["name"]))
-    return names
-
-
-_last_request = 0.0
-
-
 def _mb_get(url: str, params: dict[str, Any]) -> Any:
-    """GET a MusicBrainz JSON document, keeping to ~1 request/second.
-    Raises requests.RequestException or ValueError on failure."""
-    global _last_request
-    wait = MIN_INTERVAL - (time.monotonic() - _last_request)
-    if wait > 0:
-        time.sleep(wait)
-    try:
-        response = requests.get(
-            url,
-            params={**params, "fmt": "json"},
-            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
-            timeout=TIMEOUT,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        if not isinstance(payload, dict):
-            raise ValueError("MusicBrainz returned an invalid JSON document.")
-        return payload
-    finally:
-        _last_request = time.monotonic()
+    """Fetch a MusicBrainz document through its provider adapter."""
+    return MUSICBRAINZ_PROVIDER.get(url, params)
 
 
 def _artist_id(release: dict[str, Any]) -> str:
     """First credited artist's MBID ('Various Artists' has no useful genres)."""
     for credit in release.get("artist-credit", []):
         artist = credit.get("artist") if isinstance(credit, dict) else None
-        if artist and artist.get("id") and artist.get("name") != VARIOUS_ARTISTS:
+        if (
+            isinstance(artist, dict)
+            and artist.get("id")
+            and artist.get("name") != VARIOUS_ARTISTS
+        ):
             return str(artist["id"])
     return ""
 
@@ -97,7 +58,7 @@ def _genres(kind: str, mbid: str) -> list[str] | None:
     return [str(g["name"]).lower() for g in genres]
 
 
-def fetch_genres(release_group_id: str, artist_id: str) -> list[str] | None:
+def _fetch_genres(release_group_id: str, artist_id: str) -> list[str] | None:
     """Genres for an album: its release group's, topped up with the artist's if
     there are only a few. None means a lookup failed (so don't record 'no genres')."""
     genres = _genres("release-group", release_group_id)
@@ -112,65 +73,8 @@ def fetch_genres(release_group_id: str, artist_id: str) -> list[str] | None:
 
 
 def fetch_lastfm_tags(artist: str, album: str) -> list[str] | None:
-    """Album tags from Last.fm; None means lookup could not be completed."""
-    api_key = os.environ.get("MEDIAMAP_LASTFM_API_KEY", "").strip()
-    if not api_key:
-        print(
-            "Last.fm tags unavailable; set MEDIAMAP_LASTFM_API_KEY to enable them.",
-            file=sys.stderr,
-        )
-        return None
-    if not artist.strip() or not album.strip():
-        return []
-
-    try:
-        response = requests.get(
-            LASTFM_API_URL,
-            params={
-                "method": "album.getTopTags",
-                "api_key": api_key,
-                "artist": artist,
-                "album": album,
-                "autocorrect": 1,
-                "format": "json",
-            },
-            headers={"Accept": "application/json"},
-            timeout=TIMEOUT,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        if not isinstance(payload, dict):
-            raise ValueError("Last.fm returned an invalid JSON document.")
-        if "error" in payload:
-            raise ValueError(f"Last.fm API error {payload['error']}.")
-        tags = payload.get("toptags", {}).get("tag", [])
-        if isinstance(tags, dict):
-            tags = [tags]
-        if not isinstance(tags, list):
-            raise ValueError("Last.fm returned an invalid tag list.")
-    except (requests.RequestException, ValueError, AttributeError) as exc:
-        print(f"Last.fm album-tag lookup failed ({type(exc).__name__}).", file=sys.stderr)
-        return None
-
-    def tag_count(tag: dict[str, Any]) -> int:
-        try:
-            return int(tag.get("count") or 0)
-        except (TypeError, ValueError):
-            return 0
-
-    ranked = sorted(
-        (tag for tag in tags if isinstance(tag, dict) and tag.get("name")),
-        key=tag_count,
-        reverse=True,
-    )
-    result = []
-    for tag in ranked:
-        name = str(tag["name"]).strip().lower()
-        if name and name not in result:
-            result.append(name)
-        if len(result) == MAX_TAGS:
-            break
-    return result
+    """Get an album's tags from Last.fm via the provider adapter."""
+    return LASTFM_PROVIDER.search(MetadataQuery(title=album, creator=artist))
 
 
 def _load_genres(raw: str) -> list[str]:
@@ -182,12 +86,11 @@ def _load_genres(raw: str) -> list[str]:
 
 
 def search_releases(title: str, artist: str) -> list[dict[str, Any]]:
-    """Return matching releases without filtering by physical medium."""
-    query = f'release:"{title}"'
-    if artist:
-        query += f' AND artist:"{artist}"'
+    """Return matching releases, handling provider failures for the CLI."""
     try:
-        payload = _mb_get(MUSICBRAINZ_URL, {"query": query, "limit": 25})
+        results = MUSICBRAINZ_PROVIDER.search(
+            MetadataQuery(title=title, creator=artist)
+        )
     except requests.RequestException as exc:
         print(f"MusicBrainz lookup failed: {exc}", file=sys.stderr)
         raise MusicBrainzError(
@@ -198,42 +101,11 @@ def search_releases(title: str, artist: str) -> list[dict[str, Any]]:
         raise MusicBrainzError(
             "MusicBrainz returned an invalid response. Please try again shortly."
         ) from exc
+    return results
 
-    releases = payload.get("releases", [])
-    if not isinstance(releases, list):
-        print("MusicBrainz response did not contain a release list.", file=sys.stderr)
-        return []
 
-    records = []
-    for release in releases:
-        if not isinstance(release, dict):
-            continue
-        formats = _release_formats(release)
-        record = {
-            "source_id": str(release.get("id") or ""),
-            "title": str(release.get("title") or title),
-            "artists": _artist_names(release) or ([artist] if artist else []),
-            "year": str(release.get("date") or "")[:4],
-            "label": ", ".join(
-                str(label.get("label", {}).get("name", ""))
-                for label in release.get("label-info", [])
-                if isinstance(label, dict) and label.get("label", {}).get("name")
-            ),
-            "release_format": ", ".join(formats),
-            "country": str(release.get("country") or ""),
-            "barcode": str(release.get("barcode") or ""),
-            "release_group_id": str((release.get("release-group") or {}).get("id") or ""),
-            "artist_id": _artist_id(release),
-            "track_count": sum(
-                int(medium.get("track-count") or 0)
-                for medium in release.get("media", [])
-                if isinstance(medium, dict)
-            ),
-        }
-        if not record["source_id"]:
-            continue
-        records.append(record)
-    return records
+def fetch_genres(release_group_id: str, artist_id: str) -> list[str] | None:
+    return _fetch_genres(release_group_id, artist_id)
 
 
 def choose_album(media_type: str, title: str, artist: str) -> dict[str, Any] | None:

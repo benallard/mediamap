@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 import requests
 
 from mediamap import music
+from mediamap.music import _semantic_text
 
 from _media_test_helpers import (
     OLD_ALBUMS_SCHEMA,
@@ -40,7 +41,7 @@ class MusicTests(MediaTestCase):
         self.assertLessEqual({"genres", "lastfm_tags", "release_group_id"}, columns)
         self.assertEqual(count(col), 1)
 
-    @patch("mediamap.music.requests.get")
+    @patch("mediamap.metadata.providers.musicbrainz.requests.get")
     def test_release_search_includes_all_physical_formats(self, get):
         get.return_value = self.musicbrainz_response([
             self.release("cd-release", "CD", "CD release"),
@@ -57,7 +58,7 @@ class MusicTests(MediaTestCase):
         self.assertEqual(records[0]["track_count"], 10)
         self.assertEqual(records[0]["artists"], ["Artist"])
 
-    @patch("mediamap.music.requests.get")
+    @patch("mediamap.metadata.providers.musicbrainz.requests.get")
     def test_unreported_formats_remain_selectable(self, get):
         get.return_value = self.musicbrainz_response([
             self.release("unknown-release", None, "Unknown format"),
@@ -67,7 +68,7 @@ class MusicTests(MediaTestCase):
 
         self.assertEqual([record["source_id"] for record in records], ["unknown-release"])
 
-    @patch("mediamap.music.requests.get")
+    @patch("mediamap.metadata.providers.musicbrainz.requests.get")
     def test_release_search_reports_musicbrainz_http_errors(self, get):
         response = Mock()
         response.status_code = 503
@@ -77,7 +78,7 @@ class MusicTests(MediaTestCase):
         with self.assertRaisesRegex(music.MusicBrainzError, "temporarily unavailable"):
             music.search_releases("Album", "Artist")
 
-    @patch("mediamap.music.requests.get")
+    @patch("mediamap.metadata.providers.musicbrainz.requests.get")
     def test_search_results_carry_the_ids_needed_for_genre_lookup(self, get):
         release = self.release("cd-release", "CD", "CD release")
         release["release-group"] = {"id": "rg-1"}
@@ -92,16 +93,16 @@ class MusicTests(MediaTestCase):
         record = album_record(genres=["post-punk", "new wave"])
 
         self.assertEqual(
-            music._semantic_text(record),
+            _semantic_text(record),
             "Genres: post-punk, new wave\nArtist: Joy Division\nEra: 1970s",
         )
         bare = {"title": "Untitled", "artists": [], "year": "", "genres": []}
-        self.assertEqual(music._semantic_text(bare), "Album: Untitled")
+        self.assertEqual(_semantic_text(bare), "Album: Untitled")
 
     def test_semantic_text_includes_lastfm_tags_separately(self):
         record = album_record(genres=["trip-hop"], lastfm_tags=["instrumental", "downtempo"])
         self.assertEqual(
-            music._semantic_text(record),
+            _semantic_text(record),
             "Genres: trip-hop\nTags: instrumental, downtempo\nArtist: Joy Division\nEra: 1970s",
         )
 
@@ -119,7 +120,7 @@ class MusicTests(MediaTestCase):
         self.assertIsNone(music.fetch_genres("rg", "art"))
 
     @patch.dict(os.environ, {"MEDIAMAP_LASTFM_API_KEY": "test-key"})
-    @patch("mediamap.music.requests.get")
+    @patch("mediamap.metadata.providers.lastfm.requests.get")
     def test_fetch_lastfm_album_tags(self, get):
         response = Mock()
         response.json.return_value = {
@@ -140,7 +141,7 @@ class MusicTests(MediaTestCase):
         self.assertEqual(get.call_args.kwargs["params"]["artist"], "Wax Tailor")
 
     @patch.dict(os.environ, {"MEDIAMAP_LASTFM_API_KEY": ""})
-    @patch("mediamap.music.requests.get")
+    @patch("mediamap.metadata.providers.lastfm.requests.get")
     def test_missing_lastfm_key_leaves_album_tags_retryable(self, get):
         self.assertIsNone(music.fetch_lastfm_tags("Artist", "Album"))
         get.assert_not_called()

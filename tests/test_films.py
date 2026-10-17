@@ -5,13 +5,14 @@ from unittest.mock import Mock, patch
 import requests
 
 from mediamap import films
+from mediamap.films import _semantic_text
 
 from _media_test_helpers import MediaTestCase, count
 
 
 class FilmTests(MediaTestCase):
     @patch.dict(os.environ, {"MEDIAMAP_TMDB_API_KEY": "test-key"})
-    @patch("mediamap.films.requests.get")
+    @patch("mediamap.metadata.providers.tmdb.requests.get")
     def test_search_and_details_fetch_tmdb_movie_metadata(self, get):
         search_response = Mock()
         search_response.json.return_value = {
@@ -51,14 +52,14 @@ class FilmTests(MediaTestCase):
         )
 
     @patch.dict(os.environ, {"MEDIAMAP_TMDB_API_KEY": ""})
-    @patch("mediamap.films.requests.get")
+    @patch("mediamap.metadata.providers.tmdb.requests.get")
     def test_missing_tmdb_key_reports_configuration_requirement(self, get):
         with self.assertRaisesRegex(films.FilmMetadataError, "MEDIAMAP_TMDB_API_KEY"):
             films.search_movies("A film")
         get.assert_not_called()
 
     @patch.dict(os.environ, {"MEDIAMAP_TMDB_API_KEY": "test-key"})
-    @patch("mediamap.films.requests.get")
+    @patch("mediamap.metadata.providers.tmdb.requests.get")
     def test_tmdb_http_failure_is_reported(self, get):
         get.side_effect = requests.ConnectionError("offline")
 
@@ -66,7 +67,7 @@ class FilmTests(MediaTestCase):
             films.search_movies("A film")
 
     def test_semantic_text_uses_story_metadata_not_physical_format(self):
-        text = films._semantic_text({
+        text = _semantic_text({
             "title": "Spirited Away",
             "overview": "A young girl enters a world of spirits.",
             "genres": ["Animation", "Fantasy"],

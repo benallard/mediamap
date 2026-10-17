@@ -1,7 +1,7 @@
 import json
 import threading
 from http.client import HTTPConnection
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from mediamap import books, web
 
@@ -14,6 +14,31 @@ class BookTests(MediaTestCase):
         self.assertEqual(books.normalize_isbn("978-0-306-40615-7"), "9780306406157")
         with self.assertRaisesRegex(ValueError, "valid ISBN"):
             books.normalize_isbn("9780306406158")
+
+    def test_book_metadata_merge_stays_with_books_domain(self):
+        google = {
+            "source": "google", "source_id": "volume-1", "title": "Example",
+            "description": "A detailed description.", "subjects": ["Fiction"],
+        }
+        openlibrary = {
+            "source": "openlibrary", "source_id": "/works/OL1W", "title": "Example",
+            "subjects": ["Adventure"],
+        }
+        google_provider = Mock(name="google")
+        google_provider.name = "google"
+        google_provider.search.return_value = [google]
+        openlibrary_provider = Mock(name="openlibrary")
+        openlibrary_provider.name = "openlibrary"
+        openlibrary_provider.search.return_value = [openlibrary]
+        with patch.object(books, "BOOK_PROVIDERS", (google_provider, openlibrary_provider)):
+            merged = books.lookup_metadata(title="Example")
+
+        self.assertEqual(merged["sources"], ["google", "openlibrary"])
+        self.assertEqual(merged["source_ids"], {
+            "google": "volume-1", "openlibrary": "/works/OL1W",
+        })
+        self.assertEqual(merged["subjects"], ["Fiction", "Adventure"])
+        self.assertEqual(merged["description"], "A detailed description.")
 
     def test_books_web_search_and_add_by_isbn(self):
         handler = type(

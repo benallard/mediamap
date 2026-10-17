@@ -8,8 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Iterator
 from urllib.parse import urlparse
 
-from .books import normalize_isbn
-from .book_metadata import lookup_metadata
+from .books import lookup_metadata, normalize_isbn
 from .collection import Collection, MediaSpec
 from .music import MusicBrainzError, fetch_genres, fetch_lastfm_tags, search_releases
 
