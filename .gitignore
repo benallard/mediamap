@@ -7,3 +7,4 @@ map_model.joblib
 *_map_model.joblib
 mediamap-web-cert.pem
 mediamap-web-key.pem
+/research/out/
