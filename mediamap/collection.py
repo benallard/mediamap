@@ -82,11 +82,21 @@ class MediaSpec(ABC):
         """Columns identifying an already-catalogued item, or None to skip the check."""
         return None
 
+    def duplicate_updates(
+        self, existing: sqlite3.Row, record: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Updates to apply when an existing item is added again."""
+        return None
+
     def enrich(self, record: dict[str, Any]) -> None:
         """Fetch extra metadata (in place) once the item is known not to be a duplicate."""
 
     def warn(self, record: dict[str, Any]) -> None:
         """Print warnings about a record before it is saved."""
+
+    def display_details(self, row: sqlite3.Row) -> str:
+        """Optional media-specific details included in catalogue listings."""
+        return ""
 
     def text_from_row(self, row: sqlite3.Row) -> str | None:
         """Rebuild the embedded text from stored columns, so the recipe can change
@@ -124,7 +134,9 @@ class Collection:
 
     # -- helpers ----------------------------------------------------------
     def describe(self, row: sqlite3.Row) -> str:
-        return f"{row['title']} — {row[self.spec.creators_col]} [{row['year']}]"
+        description = f"{row['title']} — {row[self.spec.creators_col]} [{row['year']}]"
+        details = self.spec.display_details(row)
+        return f"{description} ({details})" if details else description
 
     def position(self, row: sqlite3.Row) -> str:
         cols = self.spec.coord_cols
@@ -154,6 +166,20 @@ class Collection:
         spec = self.spec
         old = self._find_duplicate(record)
         if old:
+            updates = spec.duplicate_updates(old, record)
+            if updates:
+                assignments = ", ".join(f"{column}=?" for column in updates)
+                self.db.execute(
+                    f"UPDATE {spec.table} SET {assignments} WHERE id=?",
+                    (*updates.values(), old["id"]),
+                )
+                self.db.commit()
+                updated = self.db.execute(
+                    f"SELECT * FROM {spec.table} WHERE id=?", (old["id"],)
+                ).fetchone()
+                print(f"Updated {spec.label}: {self.describe(updated)}")
+                print(f"  Position: {self.position(updated)}")
+                return old["id"]
             print(f"Already in this collection: {self.describe(old)}")
             print(f"  Position: {self.position(old)}")
             return None

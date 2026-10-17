@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from mediamap import books, cli, music
+from mediamap import books, cli, films, music
 
 from _media_test_helpers import MediaTestCase
 
@@ -10,13 +10,18 @@ class CliTests(MediaTestCase):
         with patch.object(cli, "run_command") as run_command:
             cli.main(["books", "add"])
             cli.main(["lps", "list"])
+            cli.main(["films", "add"])
 
-        (book_spec, book_args), (lp_spec, lp_args) = [c.args for c in run_command.call_args_list]
+        (book_spec, book_args), (lp_spec, lp_args), (film_spec, film_args) = [
+            c.args for c in run_command.call_args_list
+        ]
         self.assertIsInstance(book_spec, books.BookSpec)
         self.assertEqual(book_args.cmd, "add")
         self.assertIsInstance(lp_spec, music.MusicSpec)
         self.assertEqual(lp_spec.media_type, "lps")
         self.assertEqual(lp_args.cmd, "list")
+        self.assertIsInstance(film_spec, films.FilmSpec)
+        self.assertEqual(film_args.cmd, "add")
 
     def test_books_web_cli_uses_https_certificate_arguments(self):
         with patch.object(cli, "serve") as serve:

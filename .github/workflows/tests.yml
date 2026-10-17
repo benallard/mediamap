@@ -36,3 +36,4 @@ jobs:
           mediamap books --help
           mediamap cds --help
           mediamap lps --help
+          mediamap films --help

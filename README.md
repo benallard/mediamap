@@ -1,9 +1,9 @@
 # MediaMap
 
-MediaMap keeps separate local collections for books, CDs, and LPs and arranges
-each collection by semantic similarity. Books are mapped in two dimensions;
-CDs and LPs each have their own one-dimensional map. Nothing is mixed across
-these collections.
+MediaMap keeps separate local collections for books, CDs, LPs, and films and
+arranges each collection by semantic similarity. Books are mapped in two
+dimensions; CDs, LPs, and films each have their own one-dimensional map.
+Nothing is mixed across these collections.
 
 ## Setup
 
@@ -21,6 +21,10 @@ it under `models/`; future runs use that local copy. To enable a Google Books
 API key, add `GOOGLE_BOOKS_API_KEY=your_key` to a project-root `.env` file.
 MusicBrainz identifies CD/LP releases; optional album tags come from Last.fm
 when `MEDIAMAP_LASTFM_API_KEY=your_key` is configured there or in the shell.
+TMDb provides film search and descriptive metadata; set
+`MEDIAMAP_TMDB_API_KEY=your_key` in `.env` or in the shell to enable it. IMDb
+does not provide a general-purpose public API for this kind of personal
+catalogue integration.
 You can also export the key in your shell. Keep `.env` private and do not
 commit it.
 
@@ -32,6 +36,7 @@ Each collection has the same commands, but its own database and fitted map:
 uv run mediamap books add
 uv run mediamap cds add
 uv run mediamap lps add
+uv run mediamap films add
 ```
 
 For each collection, repeat `add` to build a varied set, then create its map
@@ -46,7 +51,18 @@ uv run mediamap cds build-map
 uv run mediamap cds list
 uv run mediamap lps build-map
 uv run mediamap lps list
+
+uv run mediamap films build-map
+uv run mediamap films list
+uv run mediamap films search "Spirited Away"
 ```
+
+Film lookup uses TMDb movie metadata, and asks you to confirm a match and
+whether you own it on DVD, Blu-ray, or both. A film appears only once in the
+collection; adding the same film again records any additional format without
+creating another map point. TV series are not included.
+
+This product uses the TMDB API but is not endorsed or certified by TMDB.
 
 To add books or browse LPs from a phone on the same trusted Wi-Fi network, serve
 the web interface over HTTPS. Camera access requires a certificate the phone
@@ -93,6 +109,8 @@ Open Library and MusicBrainz.
   independent 1D map.
 - `lps.sqlite3` and `lps_map_model.joblib` store the LP collection and its
   independent 1D map.
+- `films.sqlite3` and `films_map_model.joblib` store the film collection and
+  its independent 1D map.
 - The downloaded embedding model is stored in the ignored `models/` folder.
   Back up these files together if you need to preserve the collections and
   avoid downloading the model again on another machine.
@@ -112,6 +130,9 @@ not define musical semantics.
 Sparse genre/tag metadata can make placement less precise. Run `refresh` after
 configuring a Last.fm key to backfill tags for existing CDs and LPs.
 At least three albums are required to fit a 1D music map.
+TMDb attribution is required when using its API; see
+https://www.themoviedb.org/terms-of-use. Film release format is tracked for
+ownership but excluded from the semantic text.
 Book lookup may also return different editions of the same work; cross-source
 metadata merging does not guarantee edition matching.
 
@@ -123,5 +144,5 @@ Run the offline test suite with:
 uv run python -m unittest discover -s tests
 ```
 
-GitHub Actions runs the unit tests and checks all four CLI help entry points on
+GitHub Actions runs the unit tests and checks all five CLI help entry points on
 pushes and pull requests.

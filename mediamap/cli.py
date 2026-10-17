@@ -4,6 +4,7 @@ import argparse
 
 from .books import BookSpec
 from .collection import MediaSpec, add_commands, run_command
+from .films import FilmSpec
 from .music import MusicSpec
 from .web import serve
 
@@ -12,13 +13,14 @@ COLLECTIONS: dict[str, MediaSpec] = {
     "books": BookSpec(),
     "cds": MusicSpec("cds"),
     "lps": MusicSpec("lps"),
+    "films": FilmSpec(),
 }
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mediamap",
-        description="Manage separate semantic maps for books, CDs, and LPs.",
+        description="Manage separate semantic maps for books, CDs, LPs, and films.",
     )
     collections = parser.add_subparsers(dest="collection")
     for name, spec in COLLECTIONS.items():
