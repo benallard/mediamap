@@ -10,19 +10,39 @@ python -m research.probes seeds|restarts|noise         # is a result an accident
 python -m unittest research.test_ordering research.test_metrics research.test_distances
 ```
 
-## What moves back into mediamap, and what stays
+## How this relates to mediamap (it is not a drop-in replacement)
 
-| file            | role                                                              | destination            |
-|-----------------|-------------------------------------------------------------------|------------------------|
-| `ordering.py`   | `D -> permutation`: random, pcoa1d, spectral, umap1d, leaf, tsp   | `mediamap/ordering.py` (replaces `reduction.py`) |
-| `distances.py`  | distance blocks, `combine`, `explain`                             | `mediamap/distances.py`|
-| `metrics.py`    | mean step, neighbour recall, label breaks, worst joins            | `mediamap/metrics.py`  |
-| `library.py`    | fake items, taxonomies, stand-in tag embedder                     | stays here             |
-| `run.py`, `probes.py` | experiments                                                 | stay here              |
+`mediamap/reduction.py` and `research/ordering.py` do different jobs:
 
-The three moving modules only see a distance matrix; none of them knows about books or music.
-In the package, a spec would supply the blocks (genre, era, creator, ...) for its rows, and the
-collection would store the resulting *position* per item instead of UMAP coordinates.
+|                 | `reduction.py` (UMAP)                              | `ordering.py` (this folder)                 |
+|-----------------|----------------------------------------------------|---------------------------------------------|
+| input           | embedding vectors                                  | a complete distance matrix                  |
+| output          | coordinates, plus a fitted model that can `transform` a **new** item | an order of the items you gave it |
+| new items       | `transform` places one more item without touching the rest | nothing: no out-of-sample step yet |
+
+`Collection` depends on the reducer API: `build_map` fits and saves a model, `_project` calls
+`transform` for every new or pending item (`add_record`, `project_pending`). Swapping the file
+would break those paths, so `ordering.py` should be added **next to** `reduction.py`, not in
+place of it. `distances.py` and `metrics.py` are new and replace nothing.
+
+Integrating the ordering approach means design work that this folder does not do:
+
+1. **Build distance blocks from collection data.** `MediaSpec` has `text_from_row`; it would need
+   a sibling hook that returns genre/subject tags, era and creator per row, plus tag embeddings.
+2. **Store and show positions, not coordinates.** An order is a rank (or a float slot between
+   neighbours), not a point in a space. `x`/`y`, `coord_cols`, `list`, `search` and the
+   "Suggested slot" message all assume coordinates.
+3. **Define how new and pending items are placed.** This is the missing piece. The likely rule
+   is cheapest insertion between two existing neighbours (so the frozen order never moves), with
+   a policy for when a full re-ordering is allowed. Not implemented, not evaluated.
+4. **Decide what `build-map` and the model file become.** An order lives in the database; there
+   is no model to pickle.
+
+A plausible seam is a small "placement strategy" interface (`fit(rows)`, `place(row)`) with UMAP
+and ordering as two implementations. That is a proposal, not something built here.
+
+The tests in this folder check the algorithms on synthetic data. None of them exercises
+integration with mediamap.
 
 ## Caveats
 
