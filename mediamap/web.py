@@ -344,6 +344,7 @@ async function saveBook(book, button) {
 $('scan').addEventListener('click', async () => {
   if (!window.Html5Qrcode) { setStatus('Barcode scanner did not load. Enter the ISBN manually or reload the page.'); return; }
   $('scan').disabled = true; $('scanner').hidden = false; scanHandled = false;
+  $('scanner').scrollIntoView({behavior: 'smooth', block: 'center'});
   try {
     scanner = new Html5Qrcode('scanner', {formatsToSupport: [Html5QrcodeSupportedFormats.EAN_13]});
     await scanner.start({facingMode: 'environment'}, {fps: 10, qrbox: {width: 280, height: 130}}, async (code) => {
