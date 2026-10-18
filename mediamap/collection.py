@@ -1,8 +1,9 @@
 """Media-agnostic catalogue + frozen semantic map.
 
 Everything that is the same for books, CDs and LPs lives here: the SQLite
-table, embedding, the fitted UMAP model, projecting new items into it, and the
-CLI. A media type only supplies a MediaSpec (see books.py and music.py).
+table, the commands and the CLI. How items get positions (fitting a map, placing
+newcomers into it) is delegated to a Placement (see placement.py). A media type
+only supplies a MediaSpec (see books.py and music.py).
 """
 from __future__ import annotations
 
@@ -15,11 +16,17 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from .embedding import EMBEDDING_MODEL, encode_texts
-from .reduction import fit_reducer, load_reducer, save_reducer
+from .embedding import encode_texts
+from .placement import Placement, UmapPlacement
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")  # providers read os.environ, so load this early
+
+
+def _embed(*args: Any, **kwargs: Any) -> Any:
+    """The embedder handed to the placement. `encode_texts` is looked up when called, so
+    replacing it in this module (as the tests do) takes effect."""
+    return encode_texts(*args, **kwargs)
 
 
 class MediaSpec(ABC):
@@ -112,8 +119,11 @@ class MediaSpec(ABC):
 
 
 class Collection:
-    def __init__(self, spec: MediaSpec):
+    def __init__(self, spec: MediaSpec, placement: Placement | None = None):
         self.spec = spec
+        self.placement = placement or UmapPlacement(
+            spec.model_path, spec.dims, embed=_embed, label=spec.label,
+        )
         self.db = sqlite3.connect(spec.db_path)
         self.db.row_factory = sqlite3.Row
         self.db.execute(spec.schema_sql())
@@ -198,20 +208,20 @@ class Collection:
         item_id = cursor.lastrowid
         print(f"Added {spec.label} #{item_id}: {record['title']}")
 
-        if not spec.model_path.exists():
+        if not self.placement.exists():
             print("No map exists yet. Add a representative batch, then run `build-map`.")
             return item_id
         try:
-            self._project(item_id, text)
+            self._project(item_id)
         except Exception as exc:  # the item is already saved; keep it
             print(f"Could not project into the existing map: {exc}")
             print("Saved without coordinates. Run `project-pending` after resolving the issue.")
         return item_id
 
-    def _project(self, item_id: int, text: str) -> None:
+    def _project(self, item_id: int) -> None:
         spec = self.spec
-        reducer = load_reducer(spec.model_path)
-        coords = [float(v) for v in reducer.transform(encode_texts([text]))[0]]
+        row = self.db.execute(f"SELECT * FROM {spec.table} WHERE id=?", (item_id,)).fetchone()
+        coords = list(self.placement.place(row))
         assignments = ", ".join(f"{c}=?" for c in spec.coord_cols)
         self.db.execute(
             f"UPDATE {spec.table} SET {assignments} WHERE id=?", (*coords, item_id),
@@ -260,36 +270,31 @@ class Collection:
                   f"(currently {len(rows)}). 20+ varied items is preferable.")
             return
 
-        print(f"Embedding {len(rows)} {spec.label}s with {EMBEDDING_MODEL} …")
         texts = [spec.text_from_row(r) or r["semantic_text"] for r in rows]
-        vectors = encode_texts(
-            [t or f"{spec.label} with no available description" for t in texts],
-            progress=True,
-        )
-        reducer, coords = fit_reducer(vectors, spec.dims, neighbors)
-        save_reducer(reducer, spec.model_path)
+        items = [{**dict(r), "semantic_text": t} for r, t in zip(rows, texts, strict=True)]
+        coords = self.placement.fit(items, neighbors)
         assignments = ", ".join(f"{c}=?" for c in spec.coord_cols)
         self.db.executemany(
             f"UPDATE {spec.table} SET {assignments}, semantic_text=? WHERE id=?",
-            [(*(float(v) for v in point), text, row["id"])
+            [(*point, text, row["id"])
              for row, point, text in zip(rows, coords, texts, strict=True)],
         )
         self.db.commit()
-        print(f"Saved the frozen {spec.dims}-D map to {spec.model_path.name}; "
+        print(f"Saved the frozen {spec.dims}-D map to {self.placement.saved_to}; "
               f"coordinates stored in {spec.db_path.name}.")
         print("Do not rebuild it casually: a future `build-map` refits and can move every item.")
 
     def project_pending(self) -> None:
         spec = self.spec
-        if not spec.model_path.exists():
+        if not self.placement.exists():
             print("No map found. Run `build-map` first.")
             return
         rows = self.db.execute(
-            f"SELECT id, semantic_text FROM {spec.table} WHERE "
+            f"SELECT id FROM {spec.table} WHERE "
             + " OR ".join(f"{c} IS NULL" for c in spec.coord_cols) + " ORDER BY id"
         ).fetchall()
         for row in rows:
-            self._project(row["id"], row["semantic_text"])
+            self._project(row["id"])
 
     def refresh(self) -> None:
         """Backfill metadata for existing rows (e.g. after a spec gained columns)."""
