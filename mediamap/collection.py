@@ -1,9 +1,9 @@
 """Media-agnostic catalogue + frozen semantic map.
 
-Everything that is the same for books, CDs and LPs lives here: the SQLite
+Everything that is the same for books, CDs, LPs and films lives here: the SQLite
 table, the commands and the CLI. How items get positions (fitting a map, placing
 newcomers into it) is delegated to a Placement (see placement.py). A media type
-only supplies a MediaSpec (see books.py and music.py).
+only supplies a MediaSpec (see books.py, films.py and music.py).
 """
 from __future__ import annotations
 
