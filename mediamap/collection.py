@@ -362,7 +362,7 @@ def add_commands(parser: argparse.ArgumentParser, spec: MediaSpec) -> None:
     search.add_argument("query")
     sub.add_parser("list", help="list items sorted by map position")
     sub.add_parser("project-pending", help="project saved but unmapped items into the frozen map")
-    sub.add_parser("refresh", help="fetch metadata that existing items are missing")
+    sub.add_parser("refresh", help="fetch or refresh metadata for existing items")
     if getattr(spec, "media_type", None) == "lps" or spec.table == "books":
         medium = "LP" if getattr(spec, "media_type", None) == "lps" else "book"
         web = sub.add_parser("web", help=f"open a mobile-friendly {medium} catalogue over HTTPS")

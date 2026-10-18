@@ -40,6 +40,48 @@ class BookTests(MediaTestCase):
         self.assertEqual(merged["subjects"], ["Fiction", "Adventure"])
         self.assertEqual(merged["description"], "A detailed description.")
 
+    def test_book_refresh_uses_isbn_and_updates_metadata_and_semantic_text(self):
+        col = self.open_collection(books.BookSpec())
+        col.db.execute(
+            """INSERT INTO books(title,authors,isbn,source,source_id,description,
+               subjects,semantic_text) VALUES(?,?,?,?,?,?,?,?)""",
+            ("Old title", "A. Writer", "9780000000001", "openlibrary",
+             "/works/OL1W", "", "[]", "stale text"),
+        )
+        col.db.commit()
+        refreshed = {
+            "source_id": "google-volume", "title": "Updated title",
+            "authors": ["A. Writer"], "published_date": "2024-06-01",
+            "isbn_13": "9780000000001", "description": "New description.",
+            "subjects": ["Fiction"], "language": "en",
+        }
+
+        with patch.object(books.GOOGLE_BOOKS_PROVIDER, "search", return_value=[refreshed]) as search:
+            col.refresh()
+
+        query = search.call_args.args[0]
+        self.assertEqual(query.identifier, "9780000000001")
+        row = col.db.execute("SELECT * FROM books").fetchone()
+        self.assertEqual(row["title"], "Updated title")
+        self.assertEqual(row["year"], "2024")
+        self.assertEqual(row["description"], "New description.")
+        self.assertEqual(json.loads(row["subjects"]), ["Fiction"])
+        self.assertIn("Book description: New description.", row["semantic_text"])
+        self.assertEqual(row["source"], "openlibrary")
+        self.assertEqual(row["source_id"], "/works/OL1W")
+
+    def test_book_refresh_falls_back_to_title_and_author_without_isbn(self):
+        spec = books.BookSpec()
+        row = {
+            "isbn": "", "title": "Example", "authors": "A. Writer",
+        }
+        with patch.object(books.GOOGLE_BOOKS_PROVIDER, "search", return_value=[]) as search:
+            self.assertIsNone(spec.refresh_row(row))
+
+        query = search.call_args.args[0]
+        self.assertEqual((query.title, query.creator, query.identifier),
+                         ("Example", "A. Writer", None))
+
     def test_books_web_search_and_add_by_isbn(self):
         handler = type(
             "TestBooksHandler", (web.MediaMapHandler,),

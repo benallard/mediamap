@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from typing import Any
 
 import requests
@@ -192,6 +193,7 @@ class BookSpec(MediaSpec):
     dims = 2
     min_items = 5
     add_help = "manually enter a title/author and select external metadata"
+    supports_refresh = True
 
     def prompt_and_choose(self) -> dict[str, Any] | None:
         title = input("Title: ").strip()
@@ -203,6 +205,46 @@ class BookSpec(MediaSpec):
 
     def semantic_text(self, record: dict[str, Any]) -> str:
         return make_semantic_text(record)
+
+    def text_from_row(self, row: Any) -> str:
+        return make_semantic_text({
+            "title": row["title"],
+            "authors": [author for author in row["authors"].split(", ") if author],
+            "description": row["description"],
+            "subjects": json.loads(row["subjects"] or "[]"),
+        })
+
+    def refresh_row(self, row: Any) -> dict[str, Any] | None:
+        try:
+            records = GOOGLE_BOOKS_PROVIDER.search(MetadataQuery(
+                identifier=row["isbn"] or None,
+                title=row["title"] or None,
+                creator=row["authors"] or None,
+            ))
+        except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+            print(f"Google Books refresh failed for {row['title']}: {exc}", file=sys.stderr)
+            return None
+
+        if not records:
+            return None
+        book = records[0]
+        updates: dict[str, Any] = {}
+        if book.get("title"):
+            updates["title"] = book["title"]
+        if book.get("authors"):
+            updates["authors"] = ", ".join(book["authors"])
+        if book.get("published_date"):
+            updates["year"] = book["published_date"][:4]
+        isbn = book.get("isbn_13") or book.get("isbn_10")
+        if isbn:
+            updates["isbn"] = isbn
+        if book.get("description"):
+            updates["description"] = book["description"]
+        if book.get("subjects"):
+            updates["subjects"] = json.dumps(book["subjects"], ensure_ascii=False)
+        if book.get("language"):
+            updates["language"] = book["language"]
+        return updates or None
 
     def to_row(self, b: dict[str, Any]) -> dict[str, Any]:
         return {

@@ -44,7 +44,16 @@ class MetadataProviderTests(unittest.TestCase):
 
         self.assertEqual(results[0]["source"], "google")
         self.assertEqual(results[0]["source_id"], "volume-1")
-        self.assertEqual(get_json.call_args.args[1]["q"], 'intitle:"Example" inauthor:"A. Writer"')
+        self.assertEqual(get_json.call_args.args[1]["q"], "Example A. Writer")
+
+    @patch("mediamap.metadata.providers.googlebooks.get_json")
+    def test_google_books_provider_searches_by_title_only(self, get_json):
+        get_json.return_value = {"items": []}
+
+        results = GoogleBooksProvider().search(MetadataQuery(title="The Hobbit"))
+
+        self.assertEqual(results, [])
+        self.assertEqual(get_json.call_args.args[1]["q"], "The Hobbit")
 
     @patch("mediamap.metadata.providers.openlibrary.get_json")
     def test_openlibrary_provider_searches_by_identifier(self, get_json):

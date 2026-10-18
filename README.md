@@ -96,6 +96,10 @@ All collections also support `search QUERY` and `project-pending`. Books use
 Google Books and Open Library. CD and LP identification uses MusicBrainz;
 results are not filtered by format, since physical medium does not define an
 album's musical semantics.
+Run `uv run mediamap books refresh` to re-fetch book metadata from Google Books
+using each saved ISBN, or title and author when no ISBN is available. Existing
+values are kept when Google Books has no replacement; changed semantic text
+requires `uv run mediamap books build-map` to refit the map.
 When a CD or LP is projected into an existing map, `add` reports its suggested
 slot between adjacent releases (or before/after an endpoint release).
 Set `BOOKMAP_CONTACT_EMAIL` in `.env` or the shell to identify requests to

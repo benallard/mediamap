@@ -19,9 +19,9 @@ class GoogleBooksProvider(MetadataProvider[dict[str, Any]]):
         else:
             terms = []
             if query.title:
-                terms.append(f'intitle:"{query.title}"')
+                terms.append(query.title)
             if query.creator:
-                terms.append(f'inauthor:"{query.creator}"')
+                terms.append(query.creator)
             params["q"] = " ".join(terms)
 
         key = os.getenv("GOOGLE_BOOKS_API_KEY")
