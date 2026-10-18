@@ -1,9 +1,8 @@
-"""Media-agnostic catalogue + frozen semantic map.
+"""Media-agnostic catalogue workflows and frozen semantic maps.
 
-Everything that is the same for books, CDs, LPs and films lives here: the SQLite
-table, the commands and the CLI. How items get positions (fitting a map, placing
-newcomers into it) is delegated to a Placement (see placement.py). A media type
-only supplies a MediaSpec (see books.py, films.py and music.py).
+Persistence is handled by SQLitePersistence; placement is delegated to a
+Placement (see placement.py). A media type only supplies a MediaSpec (see
+books.py, films.py and music.py).
 """
 from __future__ import annotations
 
@@ -18,6 +17,7 @@ from dotenv import load_dotenv
 
 from .embedding import encode_texts
 from .placement import Placement, UmapPlacement
+from .persistence import SQLitePersistence
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")  # providers read os.environ, so load this early
@@ -55,20 +55,6 @@ class MediaSpec(ABC):
     @property
     def model_path(self) -> Path:
         return ROOT / self.model_name
-
-    def schema_sql(self) -> str:
-        columns = [
-            "id INTEGER PRIMARY KEY",
-            "title TEXT NOT NULL",
-            f"{self.creators_col} TEXT NOT NULL DEFAULT ''",
-            "year TEXT NOT NULL DEFAULT ''",
-            *(f"{name} TEXT NOT NULL DEFAULT ''" for name in self.extra_columns),
-            "semantic_text TEXT NOT NULL DEFAULT ''",
-            *(f"{name} REAL" for name in self.coord_cols),
-            "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
-            f"UNIQUE({self.unique})",
-        ]
-        return f"CREATE TABLE IF NOT EXISTS {self.table} ({', '.join(columns)})"
 
     # -- to implement -----------------------------------------------------
     @abstractmethod
@@ -124,23 +110,15 @@ class Collection:
         self.placement = placement or UmapPlacement(
             spec.model_path, spec.dims, embed=_embed, label=spec.label,
         )
-        self.db = sqlite3.connect(spec.db_path)
-        self.db.row_factory = sqlite3.Row
-        self.db.execute(spec.schema_sql())
-        self._add_missing_columns()
-        self.db.commit()
+        self.persistence = SQLitePersistence(spec, spec.db_path)
 
     def close(self) -> None:
-        self.db.close()
+        self.persistence.close()
 
-    def _add_missing_columns(self) -> None:
-        """Databases created before a spec grew new columns get them added."""
-        existing = {r["name"] for r in self.db.execute(f"PRAGMA table_info({self.spec.table})")}
-        for name in self.spec.extra_columns:
-            if name not in existing:
-                self.db.execute(
-                    f"ALTER TABLE {self.spec.table} ADD COLUMN {name} TEXT NOT NULL DEFAULT ''"
-                )
+    @property
+    def db(self) -> sqlite3.Connection:
+        """The collection connection, retained for existing integrations."""
+        return self.persistence.connection
 
     # -- helpers ----------------------------------------------------------
     def describe(self, row: sqlite3.Row) -> str:
@@ -158,10 +136,7 @@ class Collection:
         key = self.spec.duplicate_key(record)
         if not key:
             return None
-        where = " AND ".join(f"{col}=?" for col in key)
-        return self.db.execute(
-            f"SELECT * FROM {self.spec.table} WHERE {where}", tuple(key.values()),
-        ).fetchone()
+        return self.persistence.find_by_key(key)
 
     # -- commands ---------------------------------------------------------
     def add(self) -> None:
@@ -178,15 +153,8 @@ class Collection:
         if old:
             updates = spec.duplicate_updates(old, record)
             if updates:
-                assignments = ", ".join(f"{column}=?" for column in updates)
-                self.db.execute(
-                    f"UPDATE {spec.table} SET {assignments} WHERE id=?",
-                    (*updates.values(), old["id"]),
-                )
-                self.db.commit()
-                updated = self.db.execute(
-                    f"SELECT * FROM {spec.table} WHERE id=?", (old["id"],)
-                ).fetchone()
+                self.persistence.update(old["id"], updates)
+                updated = self.persistence.get(old["id"])
                 print(f"Updated {spec.label}: {self.describe(updated)}")
                 print(f"  Position: {self.position(updated)}")
                 return old["id"]
@@ -199,13 +167,7 @@ class Collection:
         spec.warn(record)
         text = spec.semantic_text(record)
         values = {**spec.to_row(record), "semantic_text": text}
-        cursor = self.db.execute(
-            f"INSERT INTO {spec.table} ({', '.join(values)}) "
-            f"VALUES ({', '.join('?' * len(values))})",
-            tuple(values.values()),
-        )
-        self.db.commit()
-        item_id = cursor.lastrowid
+        item_id = self.persistence.insert(values)
         print(f"Added {spec.label} #{item_id}: {record['title']}")
 
         if not self.placement.exists():
@@ -220,21 +182,14 @@ class Collection:
 
     def _project(self, item_id: int) -> None:
         spec = self.spec
-        row = self.db.execute(f"SELECT * FROM {spec.table} WHERE id=?", (item_id,)).fetchone()
+        row = self.persistence.get(item_id)
         coords = list(self.placement.place(row))
-        assignments = ", ".join(f"{c}=?" for c in spec.coord_cols)
-        self.db.execute(
-            f"UPDATE {spec.table} SET {assignments} WHERE id=?", (*coords, item_id),
-        )
-        self.db.commit()
+        self.persistence.update_coordinates(item_id, coords)
         shown = ", ".join(f"{c}={v:.3f}" for c, v in zip(spec.coord_cols, coords))
         print(f"Projected into the frozen map: {shown}")
 
         if spec.dims == 1:
-            rows = self.db.execute(
-                f"SELECT * FROM {spec.table} WHERE {spec.coord_cols[0]} IS NOT NULL "
-                f"ORDER BY {spec.coord_cols[0]}, title, id"
-            ).fetchall()
+            rows = self.persistence.mapped_by_primary_coordinate()
             index = next(i for i, row in enumerate(rows) if row["id"] == item_id)
             previous = rows[index - 1] if index > 0 else None
             following = rows[index + 1] if index + 1 < len(rows) else None
@@ -251,11 +206,7 @@ class Collection:
                 print("No other mapped releases yet; this is the first placement.")
             return
 
-        mapped = self.db.execute(
-            f"SELECT * FROM {spec.table} WHERE id<>? AND "
-            + " AND ".join(f"{c} IS NOT NULL" for c in spec.coord_cols),
-            (item_id,),
-            ).fetchall()
+        mapped = self.persistence.mapped_except(item_id)
         mapped.sort(key=lambda r: math.dist(coords, [r[c] for c in spec.coord_cols]))
         if mapped:
             print(f"Nearby {spec.label}s:")
@@ -264,7 +215,7 @@ class Collection:
 
     def build_map(self, neighbors: int) -> None:
         spec = self.spec
-        rows = self.db.execute(f"SELECT * FROM {spec.table} ORDER BY id").fetchall()
+        rows = self.persistence.all_by_id()
         if len(rows) < spec.min_items:
             print(f"Add at least {spec.min_items} {spec.label}s before fitting the map "
                   f"(currently {len(rows)}). 20+ varied items is preferable.")
@@ -273,26 +224,19 @@ class Collection:
         texts = [spec.text_from_row(r) or r["semantic_text"] for r in rows]
         items = [{**dict(r), "semantic_text": t} for r, t in zip(rows, texts, strict=True)]
         coords = self.placement.fit(items, neighbors)
-        assignments = ", ".join(f"{c}=?" for c in spec.coord_cols)
-        self.db.executemany(
-            f"UPDATE {spec.table} SET {assignments}, semantic_text=? WHERE id=?",
-            [(*point, text, row["id"])
-             for row, point, text in zip(rows, coords, texts, strict=True)],
+        self.persistence.save_map(
+            (row["id"], point, text)
+            for row, point, text in zip(rows, coords, texts, strict=True)
         )
-        self.db.commit()
         print(f"Saved the frozen {spec.dims}-D map to {self.placement.saved_to}; "
               f"coordinates stored in {spec.db_path.name}.")
         print("Do not rebuild it casually: a future `build-map` refits and can move every item.")
 
     def project_pending(self) -> None:
-        spec = self.spec
         if not self.placement.exists():
             print("No map found. Run `build-map` first.")
             return
-        rows = self.db.execute(
-            f"SELECT id FROM {spec.table} WHERE "
-            + " OR ".join(f"{c} IS NULL" for c in spec.coord_cols) + " ORDER BY id"
-        ).fetchall()
+        rows = self.persistence.pending_ids()
         for row in rows:
             self._project(row["id"])
 
@@ -302,26 +246,17 @@ class Collection:
         if not spec.supports_refresh:
             print(f"`refresh` is not supported for {spec.label}s.")
             return
-        rows = self.db.execute(f"SELECT * FROM {spec.table} ORDER BY id").fetchall()
+        rows = self.persistence.all_by_id()
         done = 0
         for row in rows:
             updates = spec.refresh_row(row)
             if not updates:
                 continue
-            assignments = ", ".join(f"{c}=?" for c in updates)
-            self.db.execute(
-                f"UPDATE {spec.table} SET {assignments} WHERE id=?",
-                (*updates.values(), row["id"]),
-            )
-            fresh = self.db.execute(
-                f"SELECT * FROM {spec.table} WHERE id=?", (row["id"],)
-            ).fetchone()
+            self.persistence.update(row["id"], updates)
+            fresh = self.persistence.get(row["id"])
             text = spec.text_from_row(fresh)
             if text is not None:
-                self.db.execute(
-                    f"UPDATE {spec.table} SET semantic_text=? WHERE id=?", (text, row["id"])
-                )
-            self.db.commit()  # per row, so an interrupted run keeps its progress
+                self.persistence.update(row["id"], {"semantic_text": text})
             done += 1
             print(f"  refreshed {self.describe(fresh)}")
         print(f"Refreshed {done} of {len(rows)} {spec.label}s.")
@@ -329,22 +264,13 @@ class Collection:
             print("Texts changed: run `build-map` to refit the map (this refits all coordinates).")
 
     def list_all(self) -> None:
-        cols = self.spec.coord_cols
-        order = ", ".join(reversed(cols))  # 2-D: row-major (y, then x); 1-D: x
-        rows = self.db.execute(
-            f"SELECT * FROM {self.spec.table} ORDER BY {cols[0]} IS NULL, {order}, title"
-        ).fetchall()
+        rows = self.persistence.all_by_position()
         for row in rows:
             print(f"#{row['id']:4} | {self.position(row):<22} | {self.describe(row)}")
         print(f"Total: {len(rows)}")
 
     def search(self, query: str) -> None:
-        like = f"%{query}%"
-        rows = self.db.execute(
-            f"SELECT * FROM {self.spec.table} WHERE title LIKE ? OR "
-            f"{self.spec.creators_col} LIKE ? ORDER BY title LIMIT 50",
-            (like, like),
-        ).fetchall()
+        rows = self.persistence.search(query)
         if not rows:
             print(f"No matching {self.spec.label}s in the local collection.")
             return

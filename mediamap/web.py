@@ -445,11 +445,7 @@ class MediaMapHandler(BaseHTTPRequestHandler):
         if path == "/api/albums":
             with _open_collection(self.spec) as collection:
                 cols = self.spec.coord_cols
-                order = ", ".join(reversed(cols))
-                rows = collection.db.execute(
-                    f"SELECT * FROM {self.spec.table} "
-                    f"ORDER BY {cols[0]} IS NULL, {order}, title"
-                ).fetchall()
+                rows = collection.persistence.all_by_position()
                 if self.spec.table == "books":
                     items = [
                         {"id": row["id"], "title": row["title"], "authors": row["authors"],
@@ -607,9 +603,7 @@ class MediaMapHandler(BaseHTTPRequestHandler):
                     self._send_json(409, {"error": "A map build is already running."})
                     return
                 with _open_collection(self.spec) as collection:
-                    count = collection.db.execute(
-                        f"SELECT COUNT(*) FROM {self.spec.table}"
-                    ).fetchone()[0]
+                    count = collection.persistence.count()
                 if count < self.spec.min_items:
                     self._send_json(400, {"error": f"Add at least {self.spec.min_items} {self.spec.label}s before building the map ({count} now)."})
                     return
