@@ -7,6 +7,7 @@ python -m research.run --medium lps                    # compare all algorithms,
 python -m research.run --medium books --weights genre=0.6,era=0.3,creator=0.1
 python -m research.run --medium lps --explain tsp --around "Head Hunters"
 python -m research.probes seeds|restarts|noise         # is a result an accident?
+python -m research.placement --medium lps --held-out 20   # do new items fit a frozen order?
 python -m unittest research.test_ordering research.test_metrics research.test_distances
 ```
 
@@ -32,9 +33,10 @@ Integrating the ordering approach means design work that this folder does not do
 2. **Store and show positions, not coordinates.** An order is a rank (or a float slot between
    neighbours), not a point in a space. `x`/`y`, `coord_cols`, `list`, `search` and the
    "Suggested slot" message all assume coordinates.
-3. **Define how new and pending items are placed.** This is the missing piece. The likely rule
-   is cheapest insertion between two existing neighbours (so the frozen order never moves), with
-   a policy for when a full re-ordering is allowed. Not implemented, not evaluated.
+3. **Define how new and pending items are placed.** `ordering.insert` (cheapest insertion into a
+   frozen order) is the candidate rule; `placement.py` compares it with `transform` on the fake
+   libraries. It is not wired into mediamap, and rank/slot storage (renumbering, or float slots
+   between neighbours) is still undecided.
 4. **Decide what `build-map` and the model file become.** An order lives in the database; there
    is no model to pickle.
 

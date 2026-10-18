@@ -38,3 +38,11 @@ class OrderingTests(unittest.TestCase):
         D = np.array([[0, 1, 5], [1, 0, 2], [5, 2, 0]], dtype=float)
         self.assertEqual(ordering.path_length(D, [0, 1, 2]), 3.0)
         self.assertEqual(ordering.path_length(D, [0, 2, 1]), 7.0)
+
+    def test_insert_puts_an_item_back_where_it_belongs_without_moving_the_others(self):
+        truth = self.truth
+        for removed in (0, 17, len(truth) - 1):
+            remaining = np.delete(truth, removed)
+            restored = ordering.insert(self.D, remaining, int(truth[removed]))
+            self.assertEqual(restored.tolist(), truth.tolist())
+            self.assertEqual(restored[restored != truth[removed]].tolist(), remaining.tolist())

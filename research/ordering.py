@@ -163,3 +163,17 @@ def tsp(D, restarts: int = 30, seed: int = 0) -> np.ndarray:
         if length < best_length:
             best, best_length = order, length
     return best
+
+
+# ------------------------------------------------------------ placing one item
+def insert(D, order, item: int) -> np.ndarray:
+    """Cheapest insertion: put `item` where it lengthens the path least (ends included).
+
+    The relative order of the items already placed never changes, which is what a frozen
+    shelf needs. D must cover both the placed items and `item`; `order` holds indices into D.
+    """
+    order = np.asarray(order)
+    d = np.asarray(D)[item, order]
+    inner = d[:-1] + d[1:] - np.asarray(D)[order[:-1], order[1:]]
+    costs = np.concatenate([[d[0]], inner, [d[-1]]])  # slot k = before order[k]; k = len = at the end
+    return np.insert(order, int(costs.argmin()), item)
