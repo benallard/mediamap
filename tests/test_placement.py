@@ -44,6 +44,13 @@ class UmapPlacementTests(CatalogueTestCase):
         self.assertEqual(seen[0], ["thing with no available description", "x", "y"])
 
 
+class MergingSpec(ThingSpec):
+    """A spec whose duplicates are merged into the existing item (like films and their formats)."""
+
+    def duplicate_updates(self, existing, record):
+        return {"note": "merged"}
+
+
 class RecordingPlacement(Placement):
     """A non-UMAP strategy: remembers what Collection hands it."""
 
@@ -127,3 +134,23 @@ class CollectionPlacementTests(CatalogueTestCase):
 
         self.assertEqual(self.placement.placed, ["late"])
         self.assertEqual(self.x_by_code()["late"], 9.0)
+
+    def test_merging_a_duplicate_neither_places_nor_moves_the_existing_item(self):
+        col = Collection(MergingSpec(), placement=self.placement)
+        self.addCleanup(col.close)
+        col.db.executemany(
+            "INSERT INTO things(title,code,note) VALUES(?,?,?)",
+            [(f"Thing {i}", f"t{i}", "x") for i in range(3)],
+        )
+        col.db.commit()
+        col.build_map(neighbors=2)
+        before = dict(col.db.execute("SELECT code, x FROM things").fetchall())
+        existing_id = col.db.execute("SELECT id FROM things WHERE code='t1'").fetchone()[0]
+
+        merged_id = col.add_record({"code": "t1", "title": "Thing 1"}, enrich=False)
+
+        self.assertEqual(merged_id, existing_id)
+        self.assertEqual(self.placement.placed, [])  # nothing was placed again
+        self.assertEqual(dict(col.db.execute("SELECT code, x FROM things").fetchall()), before)
+        self.assertEqual(col.db.execute("SELECT note FROM things WHERE code='t1'").fetchone()[0], "merged")
+        self.assertIn("Updated thing:", self.stdout.getvalue())
